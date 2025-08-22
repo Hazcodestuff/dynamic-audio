@@ -18,6 +18,7 @@ This mod makes the battlefield sound more alive, tactical, and intense than ever
 1. Choose your desired versions in the 'release' tab
 2. Put the .dll file into your BepInEx > Plugins folder
 3. Bam done!
+4. Full tutorial can be seen here: https://youtu.be/Bu-uv_aegKs
 
 
 ## OPEN SOURCE!
