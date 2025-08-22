@@ -5,9 +5,11 @@ This isn't just a sound pack; it's a dynamic audio simulation engine. Using adva
 
 ## Key Features
 
-Dynamic Environmental Reverb: Hear the difference between fighting in a tight concrete bunker, a dense forest, or an open plain. The mod constantly "probes" your surroundings to apply realistic echo, decay, and reverb based on the space you're in.
-Realistic Sound Occlusion: Sound is realistically muffled and blocked by terrain and objects. An enemy firing from behind a thick wall will sound muffled, giving you crucial audio cues about their location.
-Immersive Hearing Damage System: Loud sounds have consequences! Sustained gunfire and nearby explosions will build up "noise exposure," causing a temporary ringing in your ears (tinnitus). Massive explosions can cause a temporary "shell-shock" effect, muffling all audio and briefly deafening you.
+- Dynamic Environmental Reverb: Hear the difference between fighting in a tight concrete bunker, a dense forest, or an open plain. The mod constantly "probes" your surroundings to apply realistic echo, decay, and reverb based on the space you're in.
+
+- Realistic Sound Occlusion: Sound is realistically muffled and blocked by terrain and objects. An enemy firing from behind a thick wall will sound muffled, giving you crucial audio cues about their location.
+
+- Immersive Hearing Damage System: Loud sounds have consequences! Sustained gunfire and nearby explosions will build up "noise exposure," causing a temporary ringing in your ears (tinnitus). Massive explosions can cause a temporary "shell-shock" effect, muffling all audio and briefly deafening you.
 
 This mod makes the battlefield sound more alive, tactical, and intense than ever before. You'll be able to hear the world around you in a whole new way.
 
