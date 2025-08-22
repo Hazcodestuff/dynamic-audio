@@ -22,4 +22,4 @@ This mod makes the battlefield sound more alive, tactical, and intense than ever
 
 ## OPEN SOURCE!
 
-You can edit the file if you wanted to! Be creative and maybe implement something better than what I did! Download the EchoProbe.cs and edit it as you like. Some features were a bit broken and experimental, so yeah.
+You can edit the file if you wanted to! Be creative and maybe implement something better than what I did! Download the ***EchoProbe.cs*** and edit it as you like. Some features were a bit broken and experimental, so yeah.
