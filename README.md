@@ -1,6 +1,6 @@
-# Dynamic Audio V3
+# Dynamic Audio V3.1
 
-**Dynamic Audio V3** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V3.1** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
 ## 🎯 Key Features
 
@@ -20,13 +20,16 @@ Sound is realistically muffled and blocked by terrain and objects. An enemy firi
 Projectiles and fast-moving vehicles create realistic pitch shifts as they pass by you. The enhanced flyby system adds volume and pitch boosts for dramatic close calls.
 
 ### 🧠 Immersive Hearing System
-Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter (no annoying tinnitus ringing!).
+Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter.
+
+### 🔔 Optional Tinnitus Effect (DISABLED BY DEFAULT)
+**NEW IN V3.1!** For ultimate realism, enable the optional tinnitus feature. After extremely loud explosions, experience a realistic high-pitched ringing that gradually fades over time. **DISABLED BY DEFAULT** as many players find it annoying - but hardcore realism enthusiasts can enable it in the config! Fully customizable: adjust trigger threshold, duration, volume, frequency, and decay rate.
 
 ### 🌤️ Environmental Effects (Optional)
 Enable weather-based audio effects including wind influence on sound propagation and ground reflection boosts.
 
 ### ⚙️ Fully Configurable
-All parameters are customizable via the `DynamicAudio.cfg` configuration file. Adjust reverb, occlusion, sound delay, air absorption, and more to match your preferences!
+All parameters are customizable via the `DynamicAudio.cfg` configuration file. Adjust reverb, occlusion, sound delay, air absorption, tinnitus settings, and more to match your preferences!
 
 ## 📦 Installation
 
@@ -48,6 +51,7 @@ After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
 - **Air Absorption**: Frequency absorption rates, humidity, temperature
 - **Doppler & Flyby**: Strength, pitch/volume boosts, decay times
 - **Exposure & Shock**: Noise buildup rates, explosion thresholds, recovery times
+- **Tinnitus**: Enable/disable (OFF by default), trigger threshold, duration, volume, frequency, decay rate
 - **Environment**: Wind effects, ground reflections
 
 ## 🛠️ Open Source!
@@ -58,12 +62,18 @@ Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
 
+### V3.1.0
+- ✅ **Optional Tinnitus Effect** - DISABLED BY DEFAULT for player comfort
+- ✅ Customizable tinnitus settings: trigger threshold, duration, volume, frequency, decay rate
+- ✅ Tinnitus integrates with shock system for realistic hearing damage
+- ✅ All tinnitus parameters fully configurable
+
 ### V3.0.0
 - ✅ Renamed to "Dynamic Audio"
 - ✅ Custom config file (`DynamicAudio.cfg`)
 - ✅ Light vs Sound delay simulation (see explosions before hearing them!)
 - ✅ Air absorption based on distance, humidity, and temperature
-- ✅ Removed annoying tinnitus effect
+- ✅ Removed annoying tinnitus effect (now optional in V3.1!)
 - ✅ Enhanced logging and diagnostics
 - ✅ All settings fully configurable
 
