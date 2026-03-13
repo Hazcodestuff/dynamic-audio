@@ -1,26 +1,82 @@
-# Dynamic Audio V2
+# Dynamic Audio V3
 
-Tired of the same flat audio no matter where you are? Dynamic Audio V2 is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion.
-This isn't just a sound pack; it's a dynamic audio simulation engine. Using advanced ray-tracing techniques, Dynamic Audio V2 analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V3** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
-## Key Features
+## 🎯 Key Features
 
-- **Dynamic Environmental Reverb:** Hear the difference between fighting in a tight concrete bunker, a dense forest, or an open plain. The mod constantly "probes" your surroundings to apply realistic echo, decay, and reverb based on the space you're in.
+### 🏛️ Dynamic Environmental Reverb
+Hear the difference between fighting in a tight concrete bunker, a dense forest, or an open plain. The mod constantly "probes" your surroundings to apply realistic echo, decay, and reverb based on the space you're in.
 
-- **Realistic Sound Occlusion:** Sound is realistically muffled and blocked by terrain and objects. An enemy firing from behind a thick wall will sound muffled, giving you crucial audio cues about their location.
+### 🔇 Realistic Sound Occlusion
+Sound is realistically muffled and blocked by terrain and objects. An enemy firing from behind a thick wall will sound muffled, giving you crucial audio cues about their location.
 
-- **Immersive Hearing Damage System:** Loud sounds have consequences! Sustained gunfire and nearby explosions will build up "noise exposure," causing a temporary ringing in your ears (tinnitus). Massive explosions can cause a temporary "shell-shock" effect, muffling all audio and briefly deafening you.
+### ⚡ Light vs Sound Delay Simulation
+**NEW IN V3!** Experience realistic physics where light travels faster than sound. When a distant explosion occurs, you'll see the flash first, then hear the boom after a realistic delay based on the distance. Configure the sound speed and maximum delay to your liking!
 
-This mod makes the battlefield sound more alive, tactical, and intense than ever before. You'll be able to hear the world around you in a whole new way.
+### 🌬️ Air Absorption
+**NEW IN V3!** High frequencies are naturally absorbed as sound travels through air. This effect is influenced by humidity and temperature, making distant sounds more muffled and realistic.
 
-## Installation
+### 🎭 Enhanced Doppler & Flyby Effects
+Projectiles and fast-moving vehicles create realistic pitch shifts as they pass by you. The enhanced flyby system adds volume and pitch boosts for dramatic close calls.
 
-1. Choose your desired versions in the 'release' tab
-2. Put the .dll file into your BepInEx > Plugins folder
-3. Bam done!
-4. Full tutorial can be seen here: https://youtu.be/Bu-uv_aegKs
+### 🧠 Immersive Hearing System
+Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter (no annoying tinnitus ringing!).
 
+### 🌤️ Environmental Effects (Optional)
+Enable weather-based audio effects including wind influence on sound propagation and ground reflection boosts.
 
-## OPEN SOURCE!
+### ⚙️ Fully Configurable
+All parameters are customizable via the `DynamicAudio.cfg` configuration file. Adjust reverb, occlusion, sound delay, air absorption, and more to match your preferences!
 
-You can edit the file if you wanted to! Be creative and maybe implement something better than what I did! Download the ***EchoProbe.cs*** and edit it as you like. Some features were a bit broken and experimental, so yeah.
+## 📦 Installation
+
+1. Download the latest release DLL from the 'Releases' tab
+2. Place the `.dll` file into your `BepInEx/plugins` folder
+3. Launch Ravenfield - the config file will be automatically generated at `BepInEx/config/DynamicAudio.cfg`
+4. Edit the config file to customize settings to your liking!
+
+📺 Full installation tutorial: https://youtu.be/Bu-uv_aegKs
+
+## ⚙️ Configuration
+
+After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
+
+- **General**: Probe interval, ray count, max distances
+- **Reverb**: Decay time, room size, reflection delays
+- **Occlusion**: Max distance, volume reduction when blocked
+- **Sound Delay**: Enable/disable light-vs-sound simulation, sound speed, max delay
+- **Air Absorption**: Frequency absorption rates, humidity, temperature
+- **Doppler & Flyby**: Strength, pitch/volume boosts, decay times
+- **Exposure & Shock**: Noise buildup rates, explosion thresholds, recovery times
+- **Environment**: Wind effects, ground reflections
+
+## 🛠️ Open Source!
+
+This mod is fully open source! Download the `EchoProbe.cs` file and modify it to your heart's content. Want to add new features or tweak existing ones? Go ahead! The code is well-commented and C# 7.3 compatible.
+
+Feel free to experiment and share your improvements with the community!
+
+## 📝 Version History
+
+### V3.0.0
+- ✅ Renamed to "Dynamic Audio"
+- ✅ Custom config file (`DynamicAudio.cfg`)
+- ✅ Light vs Sound delay simulation (see explosions before hearing them!)
+- ✅ Air absorption based on distance, humidity, and temperature
+- ✅ Removed annoying tinnitus effect
+- ✅ Enhanced logging and diagnostics
+- ✅ All settings fully configurable
+
+### V2.0.0
+- Dynamic environmental reverb
+- Per-source occlusion
+- Doppler and flyby effects
+- Noise exposure system
+- Shell shock effects
+
+## 💬 Credits
+
+Original concept and development by zim  
+Enhanced and updated by the Ravenfield modding community
+
+Enjoy the immersive soundscape! 🎧

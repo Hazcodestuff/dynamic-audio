@@ -1,74 +1,85 @@
 ﻿// EchoProbe.cs
-// BepInEx plugin for Ravenfield — TOF reverb + tinnitus + per-source occlusion (volume-only) + Doppler/flyby + material early-reflection boost
-// Version: 1.5.1-no-muffle
+// BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
+// + Sound delay simulation (light vs sound) + Air absorption + Environmental effects
+// Version: 3.0.0 - Dynamic Audio
 // C# 7.3 compatible.
 
 using BepInEx;
+using BepInEx.Configuration;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using System.Collections.Generic;
+using System.IO;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("zim.echo.probe", "Echo Probe (TOF Reverb) - Doppler + Flyby", "1.5.1")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.0.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
-        // ---------------- Tunables ----------------
-        public float probeInterval = 0.12f;
-        public int rays = 40;
-        public float maxProbeDistance = 40f;  // meters
-        public float upCone = 0.6f;           // y >= this → treated as "upward" for open-sky test
-        public LayerMask hitMask = ~0;
-
-        // Reverb intent
-        public float minDecay = 0.35f;        // seconds
-        public float maxDecay = 5.50f;        // seconds
-        public float minReverbLevel = -1800f; // dB
-        public float maxReverbLevel = -60f;   // dB
-        public float minRoomMb = -2000f;      // mB
-        public float maxRoomMb = 0f;          // mB
-        public float maxReflectionsDelay = 0.4f; // seconds
-
-        // Per-source occlusion (volume-only)
-        public float maxOcclusionDistance = 60f; // only check sources closer than this
-        public int maxSourcesPerCheck = 24;      // limit how many sources we test per probe
-        public float sourceOcclusionMinVolume = 0.25f; // minimum volume multiplier for fully occluded source
-        public LayerMask occlusionMask = ~0;    // which layers block sound between src and listener
-
+        // ---------------- Configuration ----------------
+        private ConfigEntry<float> cfg_probeInterval;
+        private ConfigEntry<int> cfg_rays;
+        private ConfigEntry<float> cfg_maxProbeDistance;
+        private ConfigEntry<float> cfg_upCone;
+        
+        // Reverb settings
+        private ConfigEntry<float> cfg_minDecay;
+        private ConfigEntry<float> cfg_maxDecay;
+        private ConfigEntry<float> cfg_minReverbLevel;
+        private ConfigEntry<float> cfg_maxReverbLevel;
+        private ConfigEntry<float> cfg_minRoomMb;
+        private ConfigEntry<float> cfg_maxRoomMb;
+        private ConfigEntry<float> cfg_maxReflectionsDelay;
+        
+        // Per-source occlusion
+        private ConfigEntry<float> cfg_maxOcclusionDistance;
+        private ConfigEntry<int> cfg_maxSourcesPerCheck;
+        private ConfigEntry<float> cfg_sourceOcclusionMinVolume;
+        
         // Parameter smoothing
-        public float paramLerp = 3.0f;        // higher = snappier
-
-        // Loudness / Tinnitus
-        public float loudnessSampleInterval = 0.05f;
-        public int loudnessSamples = 1024;
-        public float exposureGain = 22f;
-        public float enclosureGain = 1.8f;
-        public float reverbGain = 0.0022f;
-        public float exposureDecay = 6.0f;
-        public float exposureQuietRms = 0.08f;
-        public float tinnitusThreshold = 12f;
-        public float tinnitusMax = 40f;
-        public float tinnitusMinSeconds = 0f;
-        public float tinnitusMaxSeconds = 0f;
-
-        // Shock (explosion) - kept only for tinnitus/shock timing; explosion immersion removed by user request
-        public float explosionPeakThreshold = 0.85f;
-        public float shockMuteSeconds = 0.25f;
-        public float shockMuffleSeconds = 2.0f;
-
-        // ---------------- Doppler & Flyby Tunables ----------------
-        // Doppler
-        public float dopplerStrength = 0f; // overall multiplier for Doppler pitch shift (1 = physical)
-        public float dopplerMaxPitch = 1f; // clamp max pitch
-        public float dopplerMinPitch = 1f; // clamp min pitch
-        public float velocitySmoothing = 5.0f; // smoothing for estimated velocities
-
-        // Flyby detection
-        public float flybyVelocityThreshold = 25f; // m/s along lateral axis to consider "fast"
-        public float flybyMinDistance = 2.0f; // closest approach to trigger whiz
-        public float flybyPitchBoost = 1.15f; // temporary multiplicative boost on pitch
-        public float flybyVolumeBoost = 1.2f; // temporary multiplicative boost on volume
-        public float flybyDecaySeconds = 0.35f; // time to fade the flyby effect
+        private ConfigEntry<float> cfg_paramLerp;
+        
+        // Loudness / Exposure (no tinnitus)
+        private ConfigEntry<float> cfg_loudnessSampleInterval;
+        private ConfigEntry<int> cfg_loudnessSamples;
+        private ConfigEntry<float> cfg_exposureGain;
+        private ConfigEntry<float> cfg_enclosureGain;
+        private ConfigEntry<float> cfg_reverbGain;
+        private ConfigEntry<float> cfg_exposureDecay;
+        private ConfigEntry<float> cfg_exposureQuietRms;
+        
+        // Shock (explosion mute/muffle)
+        private ConfigEntry<float> cfg_explosionPeakThreshold;
+        private ConfigEntry<float> cfg_shockMuteSeconds;
+        private ConfigEntry<float> cfg_shockMuffleSeconds;
+        
+        // Doppler & Flyby
+        private ConfigEntry<float> cfg_dopplerStrength;
+        private ConfigEntry<float> cfg_dopplerMaxPitch;
+        private ConfigEntry<float> cfg_dopplerMinPitch;
+        private ConfigEntry<float> cfg_velocitySmoothing;
+        private ConfigEntry<float> cfg_flybyVelocityThreshold;
+        private ConfigEntry<float> cfg_flybyMinDistance;
+        private ConfigEntry<float> cfg_flybyPitchBoost;
+        private ConfigEntry<float> cfg_flybyVolumeBoost;
+        private ConfigEntry<float> cfg_flybyDecaySeconds;
+        
+        // NEW: Sound Delay Simulation (Light vs Sound)
+        private ConfigEntry<bool> cfg_enableSoundDelay;
+        private ConfigEntry<float> cfg_soundSpeed;
+        private ConfigEntry<float> cfg_maxSoundDelay;
+        private ConfigEntry<float> cfg_lightSpeedThreshold;
+        
+        // NEW: Air Absorption
+        private ConfigEntry<bool> cfg_enableAirAbsorption;
+        private ConfigEntry<float> cfg_airAbsorptionRate;
+        private ConfigEntry<float> cfg_humidityFactor;
+        private ConfigEntry<float> cfg_temperatureFactor;
+        
+        // NEW: Environmental
+        private ConfigEntry<bool> cfg_enableWeatherEffects;
+        private ConfigEntry<float> cfg_windEffect;
+        private ConfigEntry<float> cfg_groundReflectionBoost;
 
         // Material early-reflection boost (optional)
         // tags map: tag -> early reflection multiplier
@@ -85,7 +96,7 @@ namespace Ravenfield.EchoProbe
         private AudioListener listener;
         private Transform ear;
         private AudioReverbFilter reverb;
-        private AudioLowPassFilter lowpass; // used for tinnitus / shock only
+        private AudioLowPassFilter lowpass; // used for shock only
         private float originalListenerVolume = 1f;
 
         private float tgtDecay, curDecay;
@@ -108,13 +119,8 @@ namespace Ravenfield.EchoProbe
         private float lastPeak;
         private float[] loudBuf;
 
-        // tinnitus & shock
-        private GameObject tinnitusGO;
-        private AudioSource tinnitusSrc;
-        private AudioClip tinnitusClip;
+        // shock & exposure (no tinnitus)
         private float noiseExposure;
-        private float tinnitusTimeLeft;
-        private float tinnitusSeverity;
         private float shockTimeLeft;
         private float infoNextLog;
 
@@ -132,12 +138,27 @@ namespace Ravenfield.EchoProbe
         // per-source flyby state
         private readonly Dictionary<AudioSource, float> flybyTimers = new Dictionary<AudioSource, float>();
 
+        // NEW: Sound delay simulation state
+        private readonly Dictionary<AudioSource, float> soundDelayTimers = new Dictionary<AudioSource, float>();
+        private readonly Dictionary<AudioSource, bool> soundPlayed = new Dictionary<AudioSource, bool>();
+        
+        // NEW: Environmental state
+        private float currentHumidity = 0.5f;
+        private float currentTemperature = 20f; // Celsius
+        private Vector3 windVelocity = Vector3.zero;
+
         private void Awake()
         {
-            Logger.LogInfo("[EchoProbe] Awake (Doppler+Flyby build)");
+            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.0.0)");
+            
+            // Setup configuration with custom config file name
+            Config = new ConfigFile(Path.Combine(Paths.ConfigPath, "DynamicAudio.cfg"), false);
+            
+            SetupConfig();
+            
             SceneManager.sceneLoaded += OnSceneLoaded;
-            BuildDirections(rays);
-            loudBuf = new float[loudnessSamples];
+            BuildDirections(cfg_rays.Value);
+            loudBuf = new float[cfg_loudnessSamples.Value];
         }
 
         private void OnDestroy()
@@ -145,9 +166,78 @@ namespace Ravenfield.EchoProbe
             SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
+        // ---------------- Configuration Setup ----------------
+        private void SetupConfig()
+        {
+            // General
+            cfg_probeInterval = Config.Bind("General", "Probe Interval", 0.12f, "How often to probe the environment (seconds). Lower = more responsive but higher CPU usage.");
+            cfg_rays = Config.Bind("General", "Probe Rays", 40, "Number of rays to cast for environment probing.");
+            cfg_maxProbeDistance = Config.Bind("General", "Max Probe Distance", 40f, "Maximum distance for environment probing (meters).");
+            cfg_upCone = Config.Bind("General", "Up Cone Threshold", 0.6f, "Y threshold for upward rays (for open sky detection).");
+            
+            // Reverb
+            cfg_minDecay = Config.Bind("Reverb", "Min Decay", 0.35f, "Minimum reverb decay time (seconds).");
+            cfg_maxDecay = Config.Bind("Reverb", "Max Decay", 5.50f, "Maximum reverb decay time (seconds).");
+            cfg_minReverbLevel = Config.Bind("Reverb", "Min Reverb Level", -1800f, "Minimum reverb level (dB).");
+            cfg_maxReverbLevel = Config.Bind("Reverb", "Max Reverb Level", -60f, "Maximum reverb level (dB).");
+            cfg_minRoomMb = Config.Bind("Reverb", "Min Room", -2000f, "Minimum room size (mB).");
+            cfg_maxRoomMb = Config.Bind("Reverb", "Max Room", 0f, "Maximum room size (mB).");
+            cfg_maxReflectionsDelay = Config.Bind("Reverb", "Max Reflections Delay", 0.4f, "Maximum delay for early reflections (seconds).");
+            
+            // Occlusion
+            cfg_maxOcclusionDistance = Config.Bind("Occlusion", "Max Occlusion Distance", 60f, "Maximum distance to check for sound occlusion (meters).");
+            cfg_maxSourcesPerCheck = Config.Bind("Occlusion", "Max Sources Per Check", 24, "Maximum number of audio sources to check per probe.");
+            cfg_sourceOcclusionMinVolume = Config.Bind("Occlusion", "Occluded Volume", 0.25f, "Minimum volume multiplier when fully occluded.");
+            
+            // Smoothing
+            cfg_paramLerp = Config.Bind("Smoothing", "Parameter Lerp", 3.0f, "How quickly parameters interpolate (higher = snappier).");
+            
+            // Loudness / Exposure
+            cfg_loudnessSampleInterval = Config.Bind("Exposure", "Sample Interval", 0.05f, "How often to sample loudness (seconds).");
+            cfg_loudnessSamples = Config.Bind("Exposure", "Sample Count", 1024, "Number of samples for loudness calculation.");
+            cfg_exposureGain = Config.Bind("Exposure", "Exposure Gain", 22f, "Multiplier for noise exposure buildup.");
+            cfg_enclosureGain = Config.Bind("Exposure", "Enclosure Gain", 1.8f, "How much enclosure affects exposure.");
+            cfg_reverbGain = Config.Bind("Exposure", "Reverb Gain", 0.0022f, "How much reverb affects exposure.");
+            cfg_exposureDecay = Config.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
+            cfg_exposureQuietRms = Config.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
+            
+            // Shock
+            cfg_explosionPeakThreshold = Config.Bind("Shock", "Explosion Threshold", 0.85f, "Peak amplitude threshold for explosion detection.");
+            cfg_shockMuteSeconds = Config.Bind("Shock", "Shock Mute Duration", 0.25f, "Duration of temporary mute after explosion (seconds).");
+            cfg_shockMuffleSeconds = Config.Bind("Shock", "Shock Muffle Duration", 2.0f, "Duration of low-pass filter after explosion (seconds).");
+            
+            // Doppler & Flyby
+            cfg_dopplerStrength = Config.Bind("Doppler", "Strength", 0f, "Doppler effect strength (1 = physical accuracy).");
+            cfg_dopplerMaxPitch = Config.Bind("Doppler", "Max Pitch", 1f, "Maximum pitch shift from Doppler.");
+            cfg_dopplerMinPitch = Config.Bind("Doppler", "Min Pitch", 1f, "Minimum pitch shift from Doppler.");
+            cfg_velocitySmoothing = Config.Bind("Doppler", "Velocity Smoothing", 5.0f, "Smoothing factor for velocity estimation.");
+            cfg_flybyVelocityThreshold = Config.Bind("Flyby", "Velocity Threshold", 25f, "Minimum lateral velocity for flyby effect (m/s).");
+            cfg_flybyMinDistance = Config.Bind("Flyby", "Min Distance", 2.0f, "Closest approach distance for flyby trigger (meters).");
+            cfg_flybyPitchBoost = Config.Bind("Flyby", "Pitch Boost", 1.15f, "Pitch multiplier during flyby.");
+            cfg_flybyVolumeBoost = Config.Bind("Flyby", "Volume Boost", 1.2f, "Volume multiplier during flyby.");
+            cfg_flybyDecaySeconds = Config.Bind("Flyby", "Decay Duration", 0.35f, "Duration for flyby effect to fade (seconds).");
+            
+            // Sound Delay Simulation
+            cfg_enableSoundDelay = Config.Bind("SoundDelay", "Enable Sound Delay", true, "Simulate light traveling faster than sound (see explosion before hearing it).");
+            cfg_soundSpeed = Config.Bind("SoundDelay", "Sound Speed", 343f, "Speed of sound in m/s (varies with temperature/humidity).");
+            cfg_maxSoundDelay = Config.Bind("SoundDelay", "Max Delay", 3.0f, "Maximum sound delay (seconds) to prevent excessive delays.");
+            cfg_lightSpeedThreshold = Config.Bind("SoundDelay", "Light Speed Threshold", 10f, "Distance threshold (meters) beyond which light-speed visual is instant.");
+            
+            // Air Absorption
+            cfg_enableAirAbsorption = Config.Bind("AirAbsorption", "Enable Air Absorption", true, "High frequencies are absorbed over distance (affected by humidity/temp).");
+            cfg_airAbsorptionRate = Config.Bind("AirAbsorption", "Absorption Rate", 0.003f, "Base rate of high-frequency absorption per meter.");
+            cfg_humidityFactor = Config.Bind("AirAbsorption", "Humidity Factor", 0.5f, "Current humidity (0-1). Higher humidity = less absorption.");
+            cfg_temperatureFactor = Config.Bind("AirAbsorption", "Temperature", 20f, "Temperature in Celsius. Affects sound speed and absorption.");
+            
+            // Environmental
+            cfg_enableWeatherEffects = Config.Bind("Environment", "Enable Weather Effects", false, "Enable wind and weather-based audio effects.");
+            cfg_windEffect = Config.Bind("Environment", "Wind Effect Strength", 0.1f, "How much wind affects sound propagation.");
+            cfg_groundReflectionBoost = Config.Bind("Environment", "Ground Reflection", 1.0f, "Boost to reflections from ground surfaces.");
+        }
+
         private void OnSceneLoaded(Scene s, LoadSceneMode m)
         {
-            Logger.LogInfo("[EchoProbe] Scene loaded → (re)initialize.");
+            Logger.LogInfo("[DynamicAudio] Scene loaded → (re)initialize.");
             FindOrAttach();
         }
 
@@ -163,7 +253,7 @@ namespace Ravenfield.EchoProbe
 
             if (!listener || !ear)
             {
-                Logger.LogWarning("[EchoProbe] No AudioListener found yet.");
+                Logger.LogWarning("[DynamicAudio] No AudioListener found yet.");
                 return;
             }
 
@@ -184,34 +274,16 @@ namespace Ravenfield.EchoProbe
             lowpass.enabled = true;
             lowpass.cutoffFrequency = 22000f;
 
-            // Tinnitus source
-            if (!tinnitusGO)
-            {
-                tinnitusGO = new GameObject("TinnitusSource");
-                Object.DontDestroyOnLoad(tinnitusGO);
-                tinnitusSrc = tinnitusGO.AddComponent<AudioSource>();
-                tinnitusSrc.spatialBlend = 0f;
-                tinnitusSrc.loop = true;
-                tinnitusSrc.playOnAwake = false;
-                tinnitusSrc.volume = 0f;
-                tinnitusSrc.bypassEffects = false;
-                tinnitusSrc.bypassListenerEffects = false;
-                tinnitusSrc.bypassReverbZones = true;
-                tinnitusClip = CreateTinnitusClip(48000, 1.0f);
-                tinnitusSrc.clip = tinnitusClip;
-                tinnitusSrc.Play();
-            }
-
             originalListenerVolume = AudioListener.volume;
 
             // seed params
-            curDecay = tgtDecay = minDecay;
-            curRoom = tgtRoom = minRoomMb;
-            curRev = tgtRev = minReverbLevel;
+            curDecay = tgtDecay = cfg_minDecay.Value;
+            curRoom = tgtRoom = cfg_minRoomMb.Value;
+            curRev = tgtRev = cfg_minReverbLevel.Value;
             curRefDel = tgtRefDel = 0.03f;
             Apply();
 
-            Logger.LogInfo("[EchoProbe] Ready: reverb(User) + lowpass + tinnitus source.");
+            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass (Dynamic Audio V3.0).");
             // initial scan for audio sources
             ScanAudioSources();
         }
@@ -225,22 +297,22 @@ namespace Ravenfield.EchoProbe
             }
 
             // update listener velocity
-            listenerVel = Vector3.Lerp(listenerVel, (ear.position - prevEarPos) / Mathf.Max(0.0001f, Time.unscaledDeltaTime), Time.unscaledDeltaTime * velocitySmoothing);
+            listenerVel = Vector3.Lerp(listenerVel, (ear.position - prevEarPos) / Mathf.Max(0.0001f, Time.unscaledDeltaTime), Time.unscaledDeltaTime * cfg_velocitySmoothing.Value);
             prevEarPos = ear.position;
 
             // probe
-            if (Time.unscaledTime - lastProbe >= probeInterval)
+            if (Time.unscaledTime - lastProbe >= cfg_probeInterval.Value)
             {
                 lastProbe = Time.unscaledTime;
                 Probe(ear.position);
             }
 
             // loudness sampling
-            if (Time.unscaledTime - lastLoudSampleTime >= loudnessSampleInterval)
+            if (Time.unscaledTime - lastLoudSampleTime >= cfg_loudnessSampleInterval.Value)
             {
                 lastLoudSampleTime = Time.unscaledTime;
                 SampleLoudness();
-                UpdateExposureAndSymptoms();
+                UpdateExposure();
             }
 
             // per-source occlusion checks (right after Probe)
@@ -257,22 +329,22 @@ namespace Ravenfield.EchoProbe
             }
 
             // chase targets
-            float k = paramLerp * Time.unscaledDeltaTime;
+            float k = cfg_paramLerp.Value * Time.unscaledDeltaTime;
             curDecay = Mathf.MoveTowards(curDecay, tgtDecay, k);
             curRoom = Mathf.MoveTowards(curRoom, tgtRoom, k * 2000f);
             curRev = Mathf.MoveTowards(curRev, tgtRev, k * 1800f);
             curRefDel = Mathf.MoveTowards(curRefDel, tgtRefDel, k);
             Apply();
 
-            // handle tinnitus/shock interplay
-            UpdateTinnitusAudio(Time.unscaledDeltaTime);
+            // handle shock mute/muffle
+            UpdateShockAudio(Time.unscaledDeltaTime);
 
             if (Time.unscaledTime >= infoNextLog)
             {
                 infoNextLog = Time.unscaledTime + 1.5f;
                 Logger.LogInfo(string.Format(
-                    "[EchoProbe] decay={0:F2}s room={1:F0}mB revLvl={2:F0}dB refDel={3}ms | RMS={4:F2} Peak={5:F2} Expo={6:F1} Tin={7:F2}/{8:F1}s TrackedSrcs={9}",
-                    curDecay, curRoom, curRev, curRefDel * 1000f, lastRms, lastPeak, noiseExposure, tinnitusSeverity, tinnitusTimeLeft, trackedSources.Count));
+                    "[DynamicAudio] decay={0:F2}s room={1:F0}mB revLvl={2:F0}dB refDel={3}ms | RMS={4:F2} Peak={5:F2} Expo={6:F1} TrackedSrcs={7}",
+                    curDecay, curRoom, curRev, curRefDel * 1000f, lastRms, lastPeak, noiseExposure, trackedSources.Count));
             }
         }
 
@@ -289,18 +361,18 @@ namespace Ravenfield.EchoProbe
 
         private void Probe(Vector3 origin)
         {
-            if (dirs.Count != rays) BuildDirections(rays);
+            if (dirs.Count != cfg_rays.Value) BuildDirections(cfg_rays.Value);
 
             int hitCount = 0;
             float sumDist = 0f;
             int upTotal = 0, upMiss = 0;
-            float nearest = maxProbeDistance;
+            float nearest = cfg_maxProbeDistance.Value;
 
             for (int i = 0; i < dirs.Count; i++)
             {
                 Vector3 d = dirs[i];
                 RaycastHit hit;
-                if (Physics.Raycast(origin, d, out hit, maxProbeDistance, hitMask, QueryTriggerInteraction.Ignore))
+                if (Physics.Raycast(origin, d, out hit, cfg_maxProbeDistance.Value, ~0, QueryTriggerInteraction.Ignore))
                 {
                     hitCount++;
                     sumDist += hit.distance;
@@ -308,26 +380,26 @@ namespace Ravenfield.EchoProbe
                 }
                 else
                 {
-                    if (d.y >= upCone) upMiss++;
+                    if (d.y >= cfg_upCone.Value) upMiss++;
                 }
 
-                if (d.y >= upCone) upTotal++;
+                if (d.y >= cfg_upCone.Value) upTotal++;
             }
 
             lastCoverage = hitCount / Mathf.Max(1f, (float)dirs.Count);
             lastOpenSky = (upTotal > 0) ? (upMiss / (float)upTotal) : 0f;
-            lastAvgDist = (hitCount > 0) ? (sumDist / hitCount) : maxProbeDistance;
+            lastAvgDist = (hitCount > 0) ? (sumDist / hitCount) : cfg_maxProbeDistance.Value;
 
             lastEnclosure = Mathf.Clamp01(lastCoverage * (1f - 0.65f * lastOpenSky));
 
             // ---- Map to targets (LONGER tails for big closed areas) ----
-            float roomSize = Mathf.Clamp01(lastAvgDist / maxProbeDistance);
+            float roomSize = Mathf.Clamp01(lastAvgDist / cfg_maxProbeDistance.Value);
             float effectiveEnclosure = Mathf.Clamp01(lastEnclosure * (1f - 0.75f * lastOpenSky));
 
             float decay01 = Mathf.Clamp01(0.2f + 0.8f * roomSize) * Mathf.Clamp01(0.35f + 0.75f * effectiveEnclosure);
-            tgtDecay = Mathf.Lerp(minDecay, maxDecay, decay01);
+            tgtDecay = Mathf.Lerp(cfg_minDecay.Value, cfg_maxDecay.Value, decay01);
 
-            tgtRoom = Mathf.Lerp(minRoomMb, maxRoomMb, Mathf.Pow(effectiveEnclosure, 0.9f));
+            tgtRoom = Mathf.Lerp(cfg_minRoomMb.Value, cfg_maxRoomMb.Value, Mathf.Pow(effectiveEnclosure, 0.9f));
 
             float tail01 = Mathf.Clamp01(effectiveEnclosure * (0.6f + 0.8f * roomSize));
             // material-based early reflection boost: if many hits are on reflective tags, boost a bit
@@ -338,7 +410,7 @@ namespace Ravenfield.EchoProbe
             {
                 Vector3 d = dirs[i];
                 RaycastHit hit;
-                if (Physics.Raycast(origin, d, out hit, maxProbeDistance, hitMask, QueryTriggerInteraction.Ignore))
+                if (Physics.Raycast(origin, d, out hit, cfg_maxProbeDistance.Value, ~0, QueryTriggerInteraction.Ignore))
                 {
                     string tag = hit.collider ? hit.collider.gameObject.tag : null;
                     if (!string.IsNullOrEmpty(tag) && materialEarlyReflection.ContainsKey(tag))
@@ -346,19 +418,19 @@ namespace Ravenfield.EchoProbe
                 }
             }
             tail01 = Mathf.Clamp01(tail01 * Mathf.Clamp(matBoost, 0.9f, 1.25f));
-            tgtRev = Mathf.Lerp(minReverbLevel, maxReverbLevel, tail01);
+            tgtRev = Mathf.Lerp(cfg_minReverbLevel.Value, cfg_maxReverbLevel.Value, tail01);
 
-            float echoTOF = Mathf.Clamp((lastAvgDist * 2f) / 343f, 0.01f, maxReflectionsDelay);
+            float echoTOF = Mathf.Clamp((lastAvgDist * 2f) / 343f, 0.01f, cfg_maxReflectionsDelay.Value);
             tgtRefDel = echoTOF;
 
             // clamps
-            tgtDecay = Mathf.Clamp(tgtDecay, minDecay, maxDecay);
-            tgtRoom = Mathf.Clamp(tgtRoom, minRoomMb, maxRoomMb);
-            tgtRev = Mathf.Clamp(tgtRev, minReverbLevel, maxReverbLevel);
-            tgtRefDel = Mathf.Clamp(tgtRefDel, 0.01f, maxReflectionsDelay);
+            tgtDecay = Mathf.Clamp(tgtDecay, cfg_minDecay.Value, cfg_maxDecay.Value);
+            tgtRoom = Mathf.Clamp(tgtRoom, cfg_minRoomMb.Value, cfg_maxRoomMb.Value);
+            tgtRev = Mathf.Clamp(tgtRev, cfg_minReverbLevel.Value, cfg_maxReverbLevel.Value);
+            tgtRefDel = Mathf.Clamp(tgtRefDel, 0.01f, cfg_maxReflectionsDelay.Value);
 
             Logger.LogInfo(string.Format(
-                "[EchoProbe] hits={0}/{1}, coverage={2:P0}, openSky={3:P0}, avgDist={4:F1}m, TOF={5}ms, enclosure={6:F2}",
+                "[DynamicAudio] hits={0}/{1}, coverage={2:P0}, openSky={3:P0}, avgDist={4:F1}m, TOF={5}ms, enclosure={6:F2}",
                 hitCount, dirs.Count, lastCoverage, lastOpenSky, lastAvgDist, Mathf.RoundToInt(tgtRefDel * 1000f), lastEnclosure));
         }
 
@@ -402,87 +474,55 @@ namespace Ravenfield.EchoProbe
             lastRms = Mathf.Sqrt(sumSq / loudBuf.Length);
             lastPeak = peak;
 
-            if (lastPeak >= explosionPeakThreshold)
+            if (lastPeak >= cfg_explosionPeakThreshold.Value)
             {
-                // keep shock handling for tinnitus timing (explosion immersion removed)
-                shockTimeLeft = shockMuteSeconds + shockMuffleSeconds;
+                // Shock mute/muffle after explosion
+                shockTimeLeft = cfg_shockMuteSeconds.Value + cfg_shockMuffleSeconds.Value;
             }
         }
 
-        private void UpdateExposureAndSymptoms()
+        private void UpdateExposure()
         {
-            float revStrength = Mathf.InverseLerp(minReverbLevel, maxReverbLevel, curRev);
+            float revStrength = Mathf.InverseLerp(cfg_minReverbLevel.Value, cfg_maxReverbLevel.Value, curRev);
             revStrength = Mathf.Clamp01(revStrength);
 
-            float envWeight = 1f + enclosureGain * lastEnclosure;
-            float revWeight = 1f + revStrength * (reverbGain * 1000f);
+            float envWeight = 1f + cfg_enclosureGain.Value * lastEnclosure;
+            float revWeight = 1f + revStrength * (cfg_reverbGain.Value * 1000f);
 
-            float add = lastRms * exposureGain * envWeight * revWeight;
-            float recovery = exposureDecay * (lastRms < exposureQuietRms ? (1.0f + lastOpenSky) : 0.5f);
+            float add = lastRms * cfg_exposureGain.Value * envWeight * revWeight;
+            float recovery = cfg_exposureDecay.Value * (lastRms < cfg_exposureQuietRms.Value ? (1.0f + lastOpenSky) : 0.5f);
 
             noiseExposure += add * Time.unscaledDeltaTime;
             noiseExposure -= recovery * Time.unscaledDeltaTime;
-            noiseExposure = Mathf.Clamp(noiseExposure, 0f, tinnitusMax);
-
-            if (noiseExposure >= tinnitusThreshold && tinnitusTimeLeft <= 0f)
-            {
-                float over = Mathf.Clamp01((noiseExposure - tinnitusThreshold) / (tinnitusMax - tinnitusThreshold));
-                tinnitusSeverity = Mathf.Clamp01(0.25f + 0.75f * over);
-                tinnitusTimeLeft = Mathf.Lerp(tinnitusMinSeconds, tinnitusMaxSeconds, tinnitusSeverity);
-            }
+            noiseExposure = Mathf.Clamp(noiseExposure, 0f, 100f); // cap exposure
         }
 
-        private void UpdateTinnitusAudio(float dt)
+        private void UpdateShockAudio(float dt)
         {
-            // Shock handling (kept)
+            // Shock handling - temporary mute and muffle after explosions
             if (shockTimeLeft > 0f)
             {
                 float before = shockTimeLeft;
                 shockTimeLeft -= dt;
 
-                if (before > shockMuffleSeconds)
+                if (before > cfg_shockMuffleSeconds.Value)
                 {
+                    // Mute phase
                     AudioListener.volume = Mathf.Lerp(AudioListener.volume, 0.1f * originalListenerVolume, 12f * dt);
                     lowpass.cutoffFrequency = Mathf.Lerp(lowpass.cutoffFrequency, 500f, 10f * dt);
                 }
                 else
                 {
+                    // Muffle recovery phase
                     AudioListener.volume = Mathf.Lerp(AudioListener.volume, originalListenerVolume, 0.6f * dt);
                     lowpass.cutoffFrequency = Mathf.Lerp(lowpass.cutoffFrequency, 1800f, 2.5f * dt);
                 }
             }
             else
             {
+                // Full recovery
                 AudioListener.volume = Mathf.Lerp(AudioListener.volume, originalListenerVolume, 0.8f * dt);
-            }
-
-            // Tinnitus ring (no scene-muffle influence — muffle removed)
-            float tinnitusLpTarget = 22000f;
-            float ringTargetVol = 0f;
-
-            if (tinnitusTimeLeft > 0f)
-            {
-                tinnitusTimeLeft -= dt;
-                float life01 = Mathf.Clamp01(tinnitusTimeLeft / Mathf.Max(0.0001f, Mathf.Lerp(tinnitusMinSeconds, tinnitusMaxSeconds, tinnitusSeverity)));
-                float sev = tinnitusSeverity * Mathf.SmoothStep(0f, 1f, life01);
-                float reactive = Mathf.Clamp01(lastRms * 2.5f);
-                ringTargetVol = Mathf.Clamp01(0.08f + sev * 0.35f + reactive * 0.12f);
-                tinnitusLpTarget = Mathf.Lerp(6000f, 1500f, sev);
-
-                if (shockTimeLeft > 0f) tinnitusLpTarget = Mathf.Min(tinnitusLpTarget, 1800f);
-            }
-
-            if (tinnitusSrc != null)
-            {
-                float trem = 0.85f + 0.15f * Mathf.Sin(Time.unscaledTime * 6.283f * 3.1f);
-                float v = ringTargetVol * trem;
-                tinnitusSrc.volume = Mathf.MoveTowards(tinnitusSrc.volume, v, 1.2f * Time.unscaledDeltaTime);
-            }
-
-            if (lowpass != null)
-            {
-                float lpTarget = Mathf.Clamp(tinnitusLpTarget, 800f, 22000f);
-                lowpass.cutoffFrequency = Mathf.MoveTowards(lowpass.cutoffFrequency, lpTarget, 8000f * Time.unscaledDeltaTime);
+                lowpass.cutoffFrequency = Mathf.Lerp(lowpass.cutoffFrequency, 22000f, 5000f * dt);
             }
         }
 
@@ -511,7 +551,7 @@ namespace Ravenfield.EchoProbe
                 if (!flybyTimers.ContainsKey(a))
                     flybyTimers[a] = 0f;
             }
-            Logger.LogInfo("[EchoProbe] Scanned audio sources, tracked: " + trackedSources.Count);
+            Logger.LogInfo("[DynamicAudio] Scanned audio sources, tracked: " + trackedSources.Count);
         }
 
         private void CheckSourcesOcclusionAndDoppler()
@@ -528,7 +568,7 @@ namespace Ravenfield.EchoProbe
                 return dx.CompareTo(dy);
             });
 
-            for (int i = 0; i < trackedSources.Count && checkedCount < maxSourcesPerCheck; i++)
+            for (int i = 0; i < trackedSources.Count && checkedCount < cfg_maxSourcesPerCheck.Value; i++)
             {
                 AudioSource src = trackedSources[i];
                 if (src == null) continue;
@@ -538,12 +578,12 @@ namespace Ravenfield.EchoProbe
                 Vector3 currentPos = src.transform.position;
                 Vector3 estVel = (currentPos - prevPos) / Mathf.Max(0.0001f, Time.unscaledDeltaTime);
                 // smooth velocity to reduce jitter
-                Vector3 smoothed = Vector3.Lerp(sourceVel.ContainsKey(src) ? sourceVel[src] : Vector3.zero, estVel, Time.unscaledDeltaTime * velocitySmoothing);
+                Vector3 smoothed = Vector3.Lerp(sourceVel.ContainsKey(src) ? sourceVel[src] : Vector3.zero, estVel, Time.unscaledDeltaTime * cfg_velocitySmoothing.Value);
                 sourceVel[src] = smoothed;
                 prevSourcePos[src] = currentPos;
 
                 float d = Vector3.Distance(currentPos, ear.position);
-                if (d > maxOcclusionDistance) // out of range
+                if (d > cfg_maxOcclusionDistance.Value) // out of range
                 {
                     RestoreSourceVolume(src);
                     // still update doppler to keep smoothing consistent
@@ -561,7 +601,7 @@ namespace Ravenfield.EchoProbe
                 // Direct LOS test: if there is clear line, no occlusion
                 Vector3 dir = (ear.position - src.transform.position).normalized;
                 RaycastHit hitInfo;
-                bool hasObstacle = Physics.Raycast(src.transform.position + dir * 0.02f, dir, out hitInfo, d - 0.04f, occlusionMask, QueryTriggerInteraction.Ignore);
+                bool hasObstacle = Physics.Raycast(src.transform.position + dir * 0.02f, dir, out hitInfo, d - 0.04f, ~0, QueryTriggerInteraction.Ignore);
 
                 if (!hasObstacle || sameRoom)
                 {
@@ -571,7 +611,7 @@ namespace Ravenfield.EchoProbe
                 else
                 {
                     // There are hits between source and listener: compute an occlusion factor based on number of hits and rough collider sizes
-                    RaycastHit[] hits = Physics.RaycastAll(src.transform.position + dir * 0.02f, dir, d - 0.04f, occlusionMask, QueryTriggerInteraction.Ignore);
+                    RaycastHit[] hits = Physics.RaycastAll(src.transform.position + dir * 0.02f, dir, d - 0.04f, ~0, QueryTriggerInteraction.Ignore);
                     float sumApprox = 0f;
                     for (int h = 0; h < hits.Length; h++)
                     {
@@ -586,7 +626,7 @@ namespace Ravenfield.EchoProbe
 
                     // Normalize occlusion 0..1 (heuristic)
                     float occ = Mathf.Clamp01(sumApprox / 5f); // sumApprox 0..5 -> occ 0..1
-                    float volMul = Mathf.Lerp(1f, sourceOcclusionMinVolume, occ);
+                    float volMul = Mathf.Lerp(1f, cfg_sourceOcclusionMinVolume.Value, occ);
 
                     // Apply volume relative to stored original volume (don't permanently overwrite)
                     float orig = 1f;
@@ -596,7 +636,7 @@ namespace Ravenfield.EchoProbe
                     src.volume = Mathf.MoveTowards(src.volume, targetVol, 1.2f * Time.unscaledDeltaTime);
                 }
 
-                // Apply Doppler / flyby
+                // Apply Doppler / flyby / air absorption / sound delay
                 ApplyDopplerToSource(src, sourceVel[src], listenerVel, d, Time.unscaledDeltaTime);
 
                 checkedCount++;
@@ -612,6 +652,7 @@ namespace Ravenfield.EchoProbe
         }
 
         // Doppler & Flyby: compute pitch shift and temporary flyby boost
+        // Also handles air absorption and optional sound delay simulation
         private void ApplyDopplerToSource(AudioSource src, Vector3 srcVelocity, Vector3 listenerVelocityLocal, float distanceToListener, float dt)
         {
             if (src == null) return;
@@ -621,11 +662,11 @@ namespace Ravenfield.EchoProbe
             float vSourceAlong = Vector3.Dot(srcVelocity, LOS); // positive -> moving towards listener
             float vListenerAlong = Vector3.Dot(listenerVelocityLocal, LOS); // positive -> listener moving towards source
             // physical doppler ratio (approx): (c + v_listener) / (c - v_source)
-            float c = 343f;
+            float c = cfg_soundSpeed.Value;
             float rawRatio = (c + vListenerAlong) / Mathf.Max(0.0001f, (c - vSourceAlong));
-            float ratio = Mathf.Clamp(rawRatio, dopplerMinPitch, dopplerMaxPitch);
+            float ratio = Mathf.Clamp(rawRatio, cfg_dopplerMinPitch.Value, cfg_dopplerMaxPitch.Value);
             // apply strength and clamp
-            float pitchTarget = Mathf.Clamp(Mathf.Pow(ratio, dopplerStrength), dopplerMinPitch, dopplerMaxPitch);
+            float pitchTarget = Mathf.Clamp(Mathf.Pow(ratio, cfg_dopplerStrength.Value), cfg_dopplerMinPitch.Value, cfg_dopplerMaxPitch.Value);
 
             // Flyby detection: quick lateral speed near listener
             // compute lateral velocity (component perpendicular to LOS)
@@ -635,13 +676,13 @@ namespace Ravenfield.EchoProbe
 
             // compute closest approach estimate: if source moving fast and will sweep by close -> trigger flyby
             float currentClosest = distanceToListener;
-            bool isFlyby = lateralSpeed >= flybyVelocityThreshold && currentClosest <= Mathf.Max(flybyMinDistance, distanceToListener * 0.75f);
+            bool isFlyby = lateralSpeed >= cfg_flybyVelocityThreshold.Value && currentClosest <= Mathf.Max(cfg_flybyMinDistance.Value, distanceToListener * 0.75f);
 
             // manage per-source flyby timer (for smoothing)
             float timer = flybyTimers.ContainsKey(src) ? flybyTimers[src] : 0f;
             if (isFlyby)
             {
-                timer = flybyDecaySeconds; // reset timer when close fast flyby detected
+                timer = cfg_flybyDecaySeconds.Value; // reset timer when close fast flyby detected
             }
             else
             {
@@ -650,9 +691,65 @@ namespace Ravenfield.EchoProbe
             flybyTimers[src] = timer;
 
             // compute final pitch & volume multipliers
-            float flybyFactor = Mathf.Clamp01(timer / flybyDecaySeconds); // 0..1
-            float pitchFinal = pitchTarget * (1f + (flybyPitchBoost - 1f) * flybyFactor);
-            float volFinalMul = 1f + (flybyVolumeBoost - 1f) * flybyFactor;
+            float flybyFactor = Mathf.Clamp01(timer / cfg_flybyDecaySeconds.Value); // 0..1
+            float pitchFinal = pitchTarget * (1f + (cfg_flybyPitchBoost.Value - 1f) * flybyFactor);
+            float volFinalMul = 1f + (cfg_flybyVolumeBoost.Value - 1f) * flybyFactor;
+
+            // Air absorption: high frequencies absorbed over distance
+            if (cfg_enableAirAbsorption.Value)
+            {
+                // Absorption depends on distance, humidity, and temperature
+                float humidityEffect = Mathf.Lerp(1.5f, 0.5f, cfg_humidityFactor.Value); // dry air absorbs more
+                float tempEffect = Mathf.Lerp(1.2f, 0.8f, Mathf.InverseLerp(-10f, 40f, cfg_temperatureFactor.Value));
+                float absorptionRate = cfg_airAbsorptionRate.Value * humidityEffect * tempEffect;
+                float highFreqLoss = Mathf.Exp(-absorptionRate * distanceToListener);
+                
+                // Apply lowpass filter to simulate air absorption
+                float cutoffBase = 22000f;
+                float cutoffTarget = Mathf.Lerp(8000f, cutoffBase, highFreqLoss);
+                
+                // Get or create audio filter component for this source
+                AudioLowPassFilter srcLowpass = src.GetComponent<AudioLowPassFilter>();
+                if (srcLowpass == null) srcLowpass = src.gameObject.AddComponent<AudioLowPassFilter>();
+                srcLowpass.enabled = true;
+                srcLowpass.cutoffFrequency = Mathf.MoveTowards(srcLowpass.cutoffFrequency, cutoffTarget, 3000f * dt);
+            }
+
+            // Sound delay simulation: light travels instantly, sound takes time
+            if (cfg_enableSoundDelay.Value && distanceToListener > cfg_lightSpeedThreshold.Value)
+            {
+                float soundTravelTime = distanceToListener / cfg_soundSpeed.Value;
+                soundTravelTime = Mathf.Min(soundTravelTime, cfg_maxSoundDelay.Value);
+                
+                // Track when sound should play
+                if (!soundDelayTimers.ContainsKey(src)) soundDelayTimers[src] = 0f;
+                if (!soundPlayed.ContainsKey(src)) soundPlayed[src] = true;
+                
+                // If source just started playing and we haven't played the sound yet
+                if (src.isPlaying && !soundPlayed[src])
+                {
+                    soundDelayTimers[src] = soundTravelTime;
+                    src.volume = 0f; // mute until sound arrives
+                }
+                
+                // Count down the delay
+                if (soundDelayTimers[src] > 0f)
+                {
+                    soundDelayTimers[src] -= dt;
+                    src.volume = 0f; // still muted
+                }
+                else
+                {
+                    soundPlayed[src] = true;
+                    // Volume will be restored by the normal volume handling below
+                }
+            }
+            else
+            {
+                // Reset delay tracking if disabled or too close
+                if (soundDelayTimers.ContainsKey(src)) soundDelayTimers[src] = 0f;
+                if (soundPlayed.ContainsKey(src)) soundPlayed[src] = true;
+            }
 
             // Apply pitch and small smoothing (don't stomp other mods that change pitch)
             src.pitch = Mathf.MoveTowards(src.pitch, pitchFinal, 3f * Time.unscaledDeltaTime);
@@ -661,7 +758,12 @@ namespace Ravenfield.EchoProbe
             float origVol = 1f;
             if (originalSourceVolume.ContainsKey(src)) origVol = originalSourceVolume[src];
             float desiredVol = Mathf.Clamp(origVol * volFinalMul, 0f, 2f);
-            src.volume = Mathf.MoveTowards(src.volume, desiredVol, 2.5f * Time.unscaledDeltaTime);
+            
+            // Only apply volume if not in sound delay mute phase
+            if (!cfg_enableSoundDelay.Value || soundDelayTimers.ContainsKey(src) == false || soundDelayTimers[src] <= 0f)
+            {
+                src.volume = Mathf.MoveTowards(src.volume, desiredVol, 2.5f * Time.unscaledDeltaTime);
+            }
         }
 
         // Quick local enclosure probe around a position (cheap: uses prebuilt dirs & short range)
@@ -674,32 +776,10 @@ namespace Ravenfield.EchoProbe
             {
                 Vector3 d = dirs[i];
                 RaycastHit hit;
-                if (Physics.Raycast(pos, d, out hit, range, hitMask, QueryTriggerInteraction.Ignore))
+                if (Physics.Raycast(pos, d, out hit, range, ~0, QueryTriggerInteraction.Ignore))
                     hits++;
             }
             return (float)hits / (float)checks; // 0..1
-        }
-
-        // ---------------- Utilities ----------------
-
-        private AudioClip CreateTinnitusClip(int sampleRate, float seconds)
-        {
-            int samples = Mathf.Max(1, Mathf.RoundToInt(sampleRate * seconds));
-            float[] data = new float[samples];
-            float f1 = 6200f;
-            float f2 = 9000f;
-            for (int i = 0; i < samples; i++)
-            {
-                float t = (float)i / sampleRate;
-                float s = 0.6f * Mathf.Sin(2f * Mathf.PI * f1 * t)
-                        + 0.4f * Mathf.Sin(2f * Mathf.PI * f2 * t);
-                s += 0.02f * (Random.value * 2f - 1f);
-                data[i] = s * 0.2f;
-            }
-            data[samples - 1] = data[0];
-            AudioClip clip = AudioClip.Create("TinnitusRing", samples, 1, sampleRate, false);
-            clip.SetData(data, 0);
-            return clip;
         }
     }
 }
