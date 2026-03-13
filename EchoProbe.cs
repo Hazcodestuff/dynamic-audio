@@ -155,16 +155,18 @@ namespace Ravenfield.EchoProbe
         private readonly Dictionary<AudioSource, bool> soundPlayed = new Dictionary<AudioSource, bool>();
         
         // NEW: Environmental state
-        private float currentHumidity = 0.5f;
         private float currentTemperature = 20f; // Celsius
         private Vector3 windVelocity = Vector3.zero;
+
+        // Custom config file reference
+        private ConfigFile customConfig;
 
         private void Awake()
         {
             Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.1.0)");
             
             // Setup configuration with custom config file name
-            Config = new ConfigFile(Path.Combine(Paths.ConfigPath, "DynamicAudio.cfg"), false);
+            customConfig = new ConfigFile(Path.Combine(Paths.ConfigPath, "DynamicAudio.cfg"), false);
             
             SetupConfig();
             
@@ -182,77 +184,77 @@ namespace Ravenfield.EchoProbe
         private void SetupConfig()
         {
             // General
-            cfg_probeInterval = Config.Bind("General", "Probe Interval", 0.12f, "How often to probe the environment (seconds). Lower = more responsive but higher CPU usage.");
-            cfg_rays = Config.Bind("General", "Probe Rays", 40, "Number of rays to cast for environment probing.");
-            cfg_maxProbeDistance = Config.Bind("General", "Max Probe Distance", 40f, "Maximum distance for environment probing (meters).");
-            cfg_upCone = Config.Bind("General", "Up Cone Threshold", 0.6f, "Y threshold for upward rays (for open sky detection).");
+            cfg_probeInterval = customConfig.Bind("General", "Probe Interval", 0.12f, "How often to probe the environment (seconds). Lower = more responsive but higher CPU usage.");
+            cfg_rays = customConfig.Bind("General", "Probe Rays", 40, "Number of rays to cast for environment probing.");
+            cfg_maxProbeDistance = customConfig.Bind("General", "Max Probe Distance", 40f, "Maximum distance for environment probing (meters).");
+            cfg_upCone = customConfig.Bind("General", "Up Cone Threshold", 0.6f, "Y threshold for upward rays (for open sky detection).");
             
             // Reverb
-            cfg_minDecay = Config.Bind("Reverb", "Min Decay", 0.35f, "Minimum reverb decay time (seconds).");
-            cfg_maxDecay = Config.Bind("Reverb", "Max Decay", 5.50f, "Maximum reverb decay time (seconds).");
-            cfg_minReverbLevel = Config.Bind("Reverb", "Min Reverb Level", -1800f, "Minimum reverb level (dB).");
-            cfg_maxReverbLevel = Config.Bind("Reverb", "Max Reverb Level", -60f, "Maximum reverb level (dB).");
-            cfg_minRoomMb = Config.Bind("Reverb", "Min Room", -2000f, "Minimum room size (mB).");
-            cfg_maxRoomMb = Config.Bind("Reverb", "Max Room", 0f, "Maximum room size (mB).");
-            cfg_maxReflectionsDelay = Config.Bind("Reverb", "Max Reflections Delay", 0.4f, "Maximum delay for early reflections (seconds).");
+            cfg_minDecay = customConfig.Bind("Reverb", "Min Decay", 0.35f, "Minimum reverb decay time (seconds).");
+            cfg_maxDecay = customConfig.Bind("Reverb", "Max Decay", 5.50f, "Maximum reverb decay time (seconds).");
+            cfg_minReverbLevel = customConfig.Bind("Reverb", "Min Reverb Level", -1800f, "Minimum reverb level (dB).");
+            cfg_maxReverbLevel = customConfig.Bind("Reverb", "Max Reverb Level", -60f, "Maximum reverb level (dB).");
+            cfg_minRoomMb = customConfig.Bind("Reverb", "Min Room", -2000f, "Minimum room size (mB).");
+            cfg_maxRoomMb = customConfig.Bind("Reverb", "Max Room", 0f, "Maximum room size (mB).");
+            cfg_maxReflectionsDelay = customConfig.Bind("Reverb", "Max Reflections Delay", 0.4f, "Maximum delay for early reflections (seconds).");
             
             // Occlusion
-            cfg_maxOcclusionDistance = Config.Bind("Occlusion", "Max Occlusion Distance", 60f, "Maximum distance to check for sound occlusion (meters).");
-            cfg_maxSourcesPerCheck = Config.Bind("Occlusion", "Max Sources Per Check", 24, "Maximum number of audio sources to check per probe.");
-            cfg_sourceOcclusionMinVolume = Config.Bind("Occlusion", "Occluded Volume", 0.25f, "Minimum volume multiplier when fully occluded.");
+            cfg_maxOcclusionDistance = customConfig.Bind("Occlusion", "Max Occlusion Distance", 60f, "Maximum distance to check for sound occlusion (meters).");
+            cfg_maxSourcesPerCheck = customConfig.Bind("Occlusion", "Max Sources Per Check", 24, "Maximum number of audio sources to check per probe.");
+            cfg_sourceOcclusionMinVolume = customConfig.Bind("Occlusion", "Occluded Volume", 0.25f, "Minimum volume multiplier when fully occluded.");
             
             // Smoothing
-            cfg_paramLerp = Config.Bind("Smoothing", "Parameter Lerp", 3.0f, "How quickly parameters interpolate (higher = snappier).");
+            cfg_paramLerp = customConfig.Bind("Smoothing", "Parameter Lerp", 3.0f, "How quickly parameters interpolate (higher = snappier).");
             
             // Loudness / Exposure
-            cfg_loudnessSampleInterval = Config.Bind("Exposure", "Sample Interval", 0.05f, "How often to sample loudness (seconds).");
-            cfg_loudnessSamples = Config.Bind("Exposure", "Sample Count", 1024, "Number of samples for loudness calculation.");
-            cfg_exposureGain = Config.Bind("Exposure", "Exposure Gain", 22f, "Multiplier for noise exposure buildup.");
-            cfg_enclosureGain = Config.Bind("Exposure", "Enclosure Gain", 1.8f, "How much enclosure affects exposure.");
-            cfg_reverbGain = Config.Bind("Exposure", "Reverb Gain", 0.0022f, "How much reverb affects exposure.");
-            cfg_exposureDecay = Config.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
-            cfg_exposureQuietRms = Config.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
+            cfg_loudnessSampleInterval = customConfig.Bind("Exposure", "Sample Interval", 0.05f, "How often to sample loudness (seconds).");
+            cfg_loudnessSamples = customConfig.Bind("Exposure", "Sample Count", 1024, "Number of samples for loudness calculation.");
+            cfg_exposureGain = customConfig.Bind("Exposure", "Exposure Gain", 22f, "Multiplier for noise exposure buildup.");
+            cfg_enclosureGain = customConfig.Bind("Exposure", "Enclosure Gain", 1.8f, "How much enclosure affects exposure.");
+            cfg_reverbGain = customConfig.Bind("Exposure", "Reverb Gain", 0.0022f, "How much reverb affects exposure.");
+            cfg_exposureDecay = customConfig.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
+            cfg_exposureQuietRms = customConfig.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
             
             // Tinnitus (DISABLED BY DEFAULT - enable if you want realistic ringing after loud explosions)
-            cfg_enableTinnitus = Config.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions (DISABLED BY DEFAULT as many find it annoying).");
-            cfg_tinnitusThreshold = Config.Bind("Tinnitus", "Trigger Threshold", 0.92f, "Peak amplitude threshold to trigger tinnitus (higher = only very loud sounds trigger it).");
-            cfg_tinnitusDuration = Config.Bind("Tinnitus", "Base Duration", 8f, "Base duration of tinnitus effect (seconds).");
-            cfg_tinnitusVolume = Config.Bind("Tinnitus", "Max Volume", 0.3f, "Maximum volume of the tinnitus ringing sound.");
-            cfg_tinnitusFrequency = Config.Bind("Tinnitus", "Frequency", 4000f, "Frequency of the tinnitus tone in Hz (higher = more piercing).");
-            cfg_tinnitusDecay = Config.Bind("Tinnitus", "Decay Rate", 0.8f, "How quickly tinnitus fades (lower = faster decay).");
+            cfg_enableTinnitus = customConfig.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions (DISABLED BY DEFAULT as many find it annoying).");
+            cfg_tinnitusThreshold = customConfig.Bind("Tinnitus", "Trigger Threshold", 0.92f, "Peak amplitude threshold to trigger tinnitus (higher = only very loud sounds trigger it).");
+            cfg_tinnitusDuration = customConfig.Bind("Tinnitus", "Base Duration", 8f, "Base duration of tinnitus effect (seconds).");
+            cfg_tinnitusVolume = customConfig.Bind("Tinnitus", "Max Volume", 0.3f, "Maximum volume of the tinnitus ringing sound.");
+            cfg_tinnitusFrequency = customConfig.Bind("Tinnitus", "Frequency", 4000f, "Frequency of the tinnitus tone in Hz (higher = more piercing).");
+            cfg_tinnitusDecay = customConfig.Bind("Tinnitus", "Decay Rate", 0.8f, "How quickly tinnitus fades (lower = faster decay).");
             
             // Shock
-            cfg_explosionPeakThreshold = Config.Bind("Shock", "Explosion Threshold", 0.85f, "Peak amplitude threshold for explosion detection.");
-            cfg_shockMuteSeconds = Config.Bind("Shock", "Shock Mute Duration", 0.25f, "Duration of temporary mute after explosion (seconds).");
-            cfg_shockMuffleSeconds = Config.Bind("Shock", "Shock Muffle Duration", 2.0f, "Duration of low-pass filter after explosion (seconds).");
+            cfg_explosionPeakThreshold = customConfig.Bind("Shock", "Explosion Threshold", 0.85f, "Peak amplitude threshold for explosion detection.");
+            cfg_shockMuteSeconds = customConfig.Bind("Shock", "Shock Mute Duration", 0.25f, "Duration of temporary mute after explosion (seconds).");
+            cfg_shockMuffleSeconds = customConfig.Bind("Shock", "Shock Muffle Duration", 2.0f, "Duration of low-pass filter after explosion (seconds).");
             
             // Doppler & Flyby
-            cfg_dopplerStrength = Config.Bind("Doppler", "Strength", 0f, "Doppler effect strength (1 = physical accuracy).");
-            cfg_dopplerMaxPitch = Config.Bind("Doppler", "Max Pitch", 1f, "Maximum pitch shift from Doppler.");
-            cfg_dopplerMinPitch = Config.Bind("Doppler", "Min Pitch", 1f, "Minimum pitch shift from Doppler.");
-            cfg_velocitySmoothing = Config.Bind("Doppler", "Velocity Smoothing", 5.0f, "Smoothing factor for velocity estimation.");
-            cfg_flybyVelocityThreshold = Config.Bind("Flyby", "Velocity Threshold", 25f, "Minimum lateral velocity for flyby effect (m/s).");
-            cfg_flybyMinDistance = Config.Bind("Flyby", "Min Distance", 2.0f, "Closest approach distance for flyby trigger (meters).");
-            cfg_flybyPitchBoost = Config.Bind("Flyby", "Pitch Boost", 1.15f, "Pitch multiplier during flyby.");
-            cfg_flybyVolumeBoost = Config.Bind("Flyby", "Volume Boost", 1.2f, "Volume multiplier during flyby.");
-            cfg_flybyDecaySeconds = Config.Bind("Flyby", "Decay Duration", 0.35f, "Duration for flyby effect to fade (seconds).");
+            cfg_dopplerStrength = customConfig.Bind("Doppler", "Strength", 0f, "Doppler effect strength (1 = physical accuracy).");
+            cfg_dopplerMaxPitch = customConfig.Bind("Doppler", "Max Pitch", 1f, "Maximum pitch shift from Doppler.");
+            cfg_dopplerMinPitch = customConfig.Bind("Doppler", "Min Pitch", 1f, "Minimum pitch shift from Doppler.");
+            cfg_velocitySmoothing = customConfig.Bind("Doppler", "Velocity Smoothing", 5.0f, "Smoothing factor for velocity estimation.");
+            cfg_flybyVelocityThreshold = customConfig.Bind("Flyby", "Velocity Threshold", 25f, "Minimum lateral velocity for flyby effect (m/s).");
+            cfg_flybyMinDistance = customConfig.Bind("Flyby", "Min Distance", 2.0f, "Closest approach distance for flyby trigger (meters).");
+            cfg_flybyPitchBoost = customConfig.Bind("Flyby", "Pitch Boost", 1.15f, "Pitch multiplier during flyby.");
+            cfg_flybyVolumeBoost = customConfig.Bind("Flyby", "Volume Boost", 1.2f, "Volume multiplier during flyby.");
+            cfg_flybyDecaySeconds = customConfig.Bind("Flyby", "Decay Duration", 0.35f, "Duration for flyby effect to fade (seconds).");
             
             // Sound Delay Simulation
-            cfg_enableSoundDelay = Config.Bind("SoundDelay", "Enable Sound Delay", true, "Simulate light traveling faster than sound (see explosion before hearing it).");
-            cfg_soundSpeed = Config.Bind("SoundDelay", "Sound Speed", 343f, "Speed of sound in m/s (varies with temperature/humidity).");
-            cfg_maxSoundDelay = Config.Bind("SoundDelay", "Max Delay", 3.0f, "Maximum sound delay (seconds) to prevent excessive delays.");
-            cfg_lightSpeedThreshold = Config.Bind("SoundDelay", "Light Speed Threshold", 10f, "Distance threshold (meters) beyond which light-speed visual is instant.");
+            cfg_enableSoundDelay = customConfig.Bind("SoundDelay", "Enable Sound Delay", true, "Simulate light traveling faster than sound (see explosion before hearing it).");
+            cfg_soundSpeed = customConfig.Bind("SoundDelay", "Sound Speed", 343f, "Speed of sound in m/s (varies with temperature/humidity).");
+            cfg_maxSoundDelay = customConfig.Bind("SoundDelay", "Max Delay", 3.0f, "Maximum sound delay (seconds) to prevent excessive delays.");
+            cfg_lightSpeedThreshold = customConfig.Bind("SoundDelay", "Light Speed Threshold", 10f, "Distance threshold (meters) beyond which light-speed visual is instant.");
             
             // Air Absorption
-            cfg_enableAirAbsorption = Config.Bind("AirAbsorption", "Enable Air Absorption", true, "High frequencies are absorbed over distance (affected by humidity/temp).");
-            cfg_airAbsorptionRate = Config.Bind("AirAbsorption", "Absorption Rate", 0.003f, "Base rate of high-frequency absorption per meter.");
-            cfg_humidityFactor = Config.Bind("AirAbsorption", "Humidity Factor", 0.5f, "Current humidity (0-1). Higher humidity = less absorption.");
-            cfg_temperatureFactor = Config.Bind("AirAbsorption", "Temperature", 20f, "Temperature in Celsius. Affects sound speed and absorption.");
+            cfg_enableAirAbsorption = customConfig.Bind("AirAbsorption", "Enable Air Absorption", true, "High frequencies are absorbed over distance (affected by humidity/temp).");
+            cfg_airAbsorptionRate = customConfig.Bind("AirAbsorption", "Absorption Rate", 0.003f, "Base rate of high-frequency absorption per meter.");
+            cfg_humidityFactor = customConfig.Bind("AirAbsorption", "Humidity Factor", 0.5f, "Current humidity (0-1). Higher humidity = less absorption.");
+            cfg_temperatureFactor = customConfig.Bind("AirAbsorption", "Temperature", 20f, "Temperature in Celsius. Affects sound speed and absorption.");
             
             // Environmental
-            cfg_enableWeatherEffects = Config.Bind("Environment", "Enable Weather Effects", false, "Enable wind and weather-based audio effects.");
-            cfg_windEffect = Config.Bind("Environment", "Wind Effect Strength", 0.1f, "How much wind affects sound propagation.");
-            cfg_groundReflectionBoost = Config.Bind("Environment", "Ground Reflection", 1.0f, "Boost to reflections from ground surfaces.");
+            cfg_enableWeatherEffects = customConfig.Bind("Environment", "Enable Weather Effects", false, "Enable wind and weather-based audio effects.");
+            cfg_windEffect = customConfig.Bind("Environment", "Wind Effect Strength", 0.1f, "How much wind affects sound propagation.");
+            cfg_groundReflectionBoost = customConfig.Bind("Environment", "Ground Reflection", 1.0f, "Boost to reflections from ground surfaces.");
         }
 
         private void OnSceneLoaded(Scene s, LoadSceneMode m)
