@@ -86,7 +86,7 @@ Feel free to experiment and share your improvements with the community!
 
 ## 💬 Credits
 
-Original concept and development by zim  
-Enhanced and updated by the Ravenfield modding community
+Original concept and development by me  
+Enhanced and updated by the Qwen AI!
 
 Enjoy the immersive soundscape! 🎧
