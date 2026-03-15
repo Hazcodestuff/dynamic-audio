@@ -68,13 +68,18 @@ Feel free to experiment and share your improvements with the community!
 ## 📝 Version History
 
 ### V3.2.0
-- ✅ **IMPROVED Tinnitus Trigger System** - Now triggers from TWO sources:
-  - Instant trigger from extremely loud explosions (peak amplitude)
-  - Accumulated noise trigger from sustained gunfire in enclosed spaces
-- ✅ Added `accumulatedNoiseForTinnitus` tracking with gradual decay
-- ✅ Better logging for tinnitus triggers (explosion vs accumulated noise)
-- ✅ Prevents double-triggering when tinnitus is already active
-- ✅ More realistic hearing damage simulation for continuous combat scenarios
+- ✅ **FIXED Tinnitus Trigger System** - COMPLETELY REWRITTEN to actually work!
+  - **Problem Fixed**: Old thresholds were mathematically impossible to reach (0.92+ peak values)
+  - **New Sensitivity System**: Uses intuitive 0.1-1.0 sensitivity scale (default 0.5)
+  - **Instant Trigger**: Explosions with peak amplitude >= sensitivity value
+  - **Sustained Trigger**: Automatic fire accumulates noise; triggers at sensitivity * 3 (default 1.5 RMS units)
+  - **Slower Decay**: Accumulated noise decays at 0.15/s instead of 0.3/s for easier buildup
+  - **Dynamic Duration**: Longer exposure = longer tinnitus duration (up to 2x base duration)
+  - **Better Logging**: Clear messages showing accumulated values and thresholds
+- ✅ Changed config name from `Trigger Threshold` to `Sensitivity` for clarity
+- ✅ Reduced default tinnitus volume from 0.3 to 0.15 for more subtle effect
+- ✅ Improved decay rate from 0.8 to 0.92 for more gradual fade
+- ✅ Now properly triggers from sustained automatic weapon fire in enclosed spaces!
 
 ### V3.1.1
 - ✅ **FIXED**: Exposure Gain default reduced from 22 to **1.0** to prevent excessive muffling of vanilla weapons

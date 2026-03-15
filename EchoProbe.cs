@@ -50,7 +50,7 @@ namespace Ravenfield.EchoProbe
         
         // Tinnitus (optional, disabled by default)
         private ConfigEntry<bool> cfg_enableTinnitus;
-        private ConfigEntry<float> cfg_tinnitusThreshold;
+        private ConfigEntry<float> cfg_tinnitusSensitivity;  // Changed from Threshold - more intuitive
         private ConfigEntry<float> cfg_tinnitusDuration;
         private ConfigEntry<float> cfg_tinnitusVolume;
         private ConfigEntry<float> cfg_tinnitusFrequency;
@@ -135,7 +135,7 @@ namespace Ravenfield.EchoProbe
         // tinnitus state
         private float tinnitusTimeLeft;
         private float tinnitusCurrentVolume;
-        private float accumulatedNoiseForTinnitus = 0f; // Tracks cumulative noise for tinnitus trigger
+        private float accumulatedNoiseForTinnitus = 0f; // Tracks cumulative RMS for sustained fire tinnitus trigger
 
         // tracked sources for occlusion + original volume store
         private readonly List<AudioSource> trackedSources = new List<AudioSource>();
@@ -217,12 +217,12 @@ namespace Ravenfield.EchoProbe
             cfg_exposureQuietRms = customConfig.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
             
             // Tinnitus (DISABLED BY DEFAULT - enable if you want realistic ringing after loud explosions)
-            cfg_enableTinnitus = customConfig.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions (DISABLED BY DEFAULT as many find it annoying).");
-            cfg_tinnitusThreshold = customConfig.Bind("Tinnitus", "Trigger Threshold", 0.92f, "Peak amplitude threshold to trigger tinnitus (higher = only very loud sounds trigger it).");
+            cfg_enableTinnitus = customConfig.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions or sustained gunfire (DISABLED BY DEFAULT as many find it annoying).");
+            cfg_tinnitusSensitivity = customConfig.Bind("Tinnitus", "Sensitivity", 0.5f, "How easily tinnitus triggers (0.1-1.0). Lower = easier to trigger. For instant explosions: peak must exceed this. For sustained noise: accumulated RMS must exceed this * 3.");
             cfg_tinnitusDuration = customConfig.Bind("Tinnitus", "Base Duration", 8f, "Base duration of tinnitus effect (seconds).");
-            cfg_tinnitusVolume = customConfig.Bind("Tinnitus", "Max Volume", 0.3f, "Maximum volume of the tinnitus ringing sound.");
+            cfg_tinnitusVolume = customConfig.Bind("Tinnitus", "Ring Volume", 0.15f, "Volume of the tinnitus ringing sound (0-1). Lower is more subtle and realistic.");
             cfg_tinnitusFrequency = customConfig.Bind("Tinnitus", "Frequency", 4000f, "Frequency of the tinnitus tone in Hz (higher = more piercing).");
-            cfg_tinnitusDecay = customConfig.Bind("Tinnitus", "Decay Rate", 0.8f, "How quickly tinnitus fades (lower = faster decay).");
+            cfg_tinnitusDecay = customConfig.Bind("Tinnitus", "Decay Rate", 0.92f, "How quickly tinnitus fades per second (0.8-0.98). Lower = faster decay.");
             
             // Shock
             cfg_explosionPeakThreshold = customConfig.Bind("Shock", "Explosion Threshold", 0.85f, "Peak amplitude threshold for explosion detection.");
@@ -503,11 +503,12 @@ namespace Ravenfield.EchoProbe
                 shockTimeLeft = cfg_shockMuteSeconds.Value + cfg_shockMuffleSeconds.Value;
                 
                 // Also trigger tinnitus from instant loud explosions if enabled
-                if (cfg_enableTinnitus.Value && lastPeak >= cfg_tinnitusThreshold.Value && tinnitusTimeLeft <= 0f)
+                // Now uses sensitivity instead of high threshold - much easier to trigger
+                if (cfg_enableTinnitus.Value && lastPeak >= cfg_tinnitusSensitivity.Value && tinnitusTimeLeft <= 0f)
                 {
                     tinnitusTimeLeft = cfg_tinnitusDuration.Value;
                     tinnitusCurrentVolume = cfg_tinnitusVolume.Value;
-                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered by explosion! Peak: {lastPeak:F2}");
+                    Logger.LogInfo($"[DynamicAudio] TINNITUS TRIGGERED by explosion! Peak: {lastPeak:F2}, Duration: {cfg_tinnitusDuration.Value:F1}s");
                 }
             }
         }
@@ -528,23 +529,28 @@ namespace Ravenfield.EchoProbe
             noiseExposure = Mathf.Clamp(noiseExposure, 0f, 100f); // cap exposure
             
             // Accumulate noise for tinnitus trigger (only if enabled)
+            // This allows tinnitus to trigger from sustained loud noise like automatic weapon fire
             if (cfg_enableTinnitus.Value)
             {
+                // Accumulate RMS over time (sustained noise buildup)
                 accumulatedNoiseForTinnitus += lastRms * Time.unscaledDeltaTime;
-                // Decay accumulated noise over time (slower decay than exposure)
-                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.3f * Time.unscaledDeltaTime));
+                
+                // Slow natural decay - noise accumulates faster than it decays during sustained fire
+                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.15f * Time.unscaledDeltaTime));
                 
                 // Trigger tinnitus if accumulated noise exceeds threshold
-                // This makes it trigger from sustained loud noise (like continuous shooting) not just single explosions
-                float tinnitusAccumulatedThreshold = cfg_tinnitusThreshold.Value * 2f; // Higher threshold for accumulated noise
+                // Threshold is now sensitivity * 3 (so default 0.5 * 3 = 1.5 accumulated RMS units)
+                // This is achievable with sustained automatic fire in enclosed spaces
+                float tinnitusAccumulatedThreshold = cfg_tinnitusSensitivity.Value * 3f;
+                
                 if (accumulatedNoiseForTinnitus >= tinnitusAccumulatedThreshold && tinnitusTimeLeft <= 0f)
                 {
-                    float triggerDuration = cfg_tinnitusDuration.Value;
+                    float triggerDuration = cfg_tinnitusDuration.Value * (1f + Mathf.Min(1f, accumulatedNoiseForTinnitus / tinnitusAccumulatedThreshold));
                     tinnitusTimeLeft = triggerDuration;
                     tinnitusCurrentVolume = cfg_tinnitusVolume.Value;
-                    float accumulatedValue = accumulatedNoiseForTinnitus; // Store before reset
+                    float accumulatedValue = accumulatedNoiseForTinnitus;
                     accumulatedNoiseForTinnitus = 0f; // Reset after triggering
-                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered by sustained noise! Accumulated: {accumulatedValue:F2}, Duration: {triggerDuration:F1}s");
+                    Logger.LogInfo($"[DynamicAudio] TINNITUS TRIGGERED by sustained gunfire! Accumulated: {accumulatedValue:F2} (threshold: {tinnitusAccumulatedThreshold:F2}), Duration: {triggerDuration:F1}s");
                 }
             }
         }
