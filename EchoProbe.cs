@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
-// + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Optional Tinnitus
-// Version: 3.2.1 - Config Sync Fixed - Dynamic Audio (Fixed tinnitus to trigger from sustained noise accumulation)
+// + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus (ENABLED BY DEFAULT FOR TESTING)
+// Version: 3.3.0 - Robust Tinnitus Implementation with Real Ringing Sound
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -13,7 +13,7 @@ using System.IO;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.2.1")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.3.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -48,9 +48,9 @@ namespace Ravenfield.EchoProbe
         private ConfigEntry<float> cfg_exposureDecay;
         private ConfigEntry<float> cfg_exposureQuietRms;
         
-        // Tinnitus (optional, disabled by default)
+        // Tinnitus (ENABLED BY DEFAULT FOR TESTING)
         private ConfigEntry<bool> cfg_enableTinnitus;
-        private ConfigEntry<float> cfg_tinnitusSensitivity;  // Changed from Threshold - more intuitive
+        private ConfigEntry<float> cfg_tinnitusSensitivity;
         private ConfigEntry<float> cfg_tinnitusDuration;
         private ConfigEntry<float> cfg_tinnitusVolume;
         private ConfigEntry<float> cfg_tinnitusFrequency;
@@ -135,7 +135,12 @@ namespace Ravenfield.EchoProbe
         // tinnitus state
         private float tinnitusTimeLeft;
         private float tinnitusCurrentVolume;
-        private float accumulatedNoiseForTinnitus = 0f; // Tracks cumulative RMS for sustained fire tinnitus trigger
+        private float accumulatedNoiseForTinnitus = 0f;
+        
+        // Tinnitus audio source and oscillator
+        private AudioSource tinnitusSource;
+        private AudioClip tinnitusClip;
+        private float tinnitusPhase = 0f;
 
         // tracked sources for occlusion + original volume store
         private readonly List<AudioSource> trackedSources = new List<AudioSource>();
@@ -162,8 +167,9 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.2.1 (Fixed Config Sync))");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V3.3.0 - Tinnitus ENABLED by default for testing");
             
+            SetupConfig();
             
             SceneManager.sceneLoaded += OnSceneLoaded;
             BuildDirections(cfg_rays.Value);
@@ -210,13 +216,13 @@ namespace Ravenfield.EchoProbe
             cfg_exposureDecay = Config.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
             cfg_exposureQuietRms = Config.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
             
-            // Tinnitus (DISABLED BY DEFAULT - enable if you want realistic ringing after loud explosions)
-            cfg_enableTinnitus = Config.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions or sustained gunfire (DISABLED BY DEFAULT as many find it annoying).");
-            cfg_tinnitusSensitivity = Config.Bind("Tinnitus", "Sensitivity", 0.5f, "How easily tinnitus triggers (0.1-1.0). Lower = easier to trigger. For instant explosions: peak must exceed this. For sustained noise: accumulated RMS must exceed this * 3.");
-            cfg_tinnitusDuration = Config.Bind("Tinnitus", "Base Duration", 8f, "Base duration of tinnitus effect (seconds).");
-            cfg_tinnitusVolume = Config.Bind("Tinnitus", "Ring Volume", 0.15f, "Volume of the tinnitus ringing sound (0-1). Lower is more subtle and realistic.");
-            cfg_tinnitusFrequency = Config.Bind("Tinnitus", "Frequency", 4000f, "Frequency of the tinnitus tone in Hz (higher = more piercing).");
-            cfg_tinnitusDecay = Config.Bind("Tinnitus", "Decay Rate", 0.92f, "How quickly tinnitus fades per second (0.8-0.98). Lower = faster decay.");
+            // Tinnitus (ENABLED BY DEFAULT FOR TESTING - set to false if you find it annoying)
+            cfg_enableTinnitus = Config.Bind("Tinnitus", "Enable Tinnitus", true, "Enable tinnitus effect after loud explosions or sustained gunfire (ENABLED BY DEFAULT for testing - set to false if you find it annoying).");
+            cfg_tinnitusSensitivity = Config.Bind("Tinnitus", "Sensitivity", 0.3f, "How easily tinnitus triggers (0.1-1.0). Lower = easier to trigger. For instant explosions: peak must exceed this. For sustained noise: accumulated RMS must exceed this * 2.");
+            cfg_tinnitusDuration = Config.Bind("Tinnitus", "Base Duration", 6f, "Base duration of tinnitus effect (seconds).");
+            cfg_tinnitusVolume = Config.Bind("Tinnitus", "Ring Volume", 0.2f, "Volume of the tinnitus ringing sound (0-1). Higher = more noticeable ringing.");
+            cfg_tinnitusFrequency = Config.Bind("Tinnitus", "Frequency", 3500f, "Frequency of the tinnitus tone in Hz (3000-5000 recommended for realistic ringing).");
+            cfg_tinnitusDecay = Config.Bind("Tinnitus", "Decay Rate", 0.88f, "How quickly tinnitus fades per second (0.8-0.95). Lower = faster decay.");
             
             // Shock
             cfg_explosionPeakThreshold = Config.Bind("Shock", "Explosion Threshold", 0.85f, "Peak amplitude threshold for explosion detection.");
@@ -291,6 +297,35 @@ namespace Ravenfield.EchoProbe
             lowpass.enabled = true;
             lowpass.cutoffFrequency = 22000f;
 
+            // Initialize tinnitus audio source for generating ringing sound
+            if (cfg_enableTinnitus.Value && !tinnitusSource)
+            {
+                GameObject tinnitusObj = new GameObject("TinnitusGenerator");
+                tinnitusObj.transform.SetParent(listener.transform);
+                tinnitusObj.transform.localPosition = Vector3.zero;
+                tinnitusSource = tinnitusObj.AddComponent<AudioSource>();
+                tinnitusSource.playOnAwake = false;
+                tinnitusSource.loop = true;
+                tinnitusSource.spatialBlend = 0f; // 2D sound, not affected by position
+                tinnitusSource.volume = 0f; // Start silent
+                
+                // Generate a sine wave clip for tinnitus ringing
+                int sampleRate = 44100;
+                float duration = 2f;
+                AudioClip clip = AudioClip.Create("TinnitusTone", Mathf.FloorToInt(sampleRate * duration), 1, sampleRate, false);
+                float[] samples = new float[Mathf.FloorToInt(sampleRate * duration)];
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    float t = i / (float)sampleRate;
+                    samples[i] = Mathf.Sin(2f * Mathf.PI * cfg_tinnitusFrequency.Value * t) * 0.3f;
+                }
+                clip.SetData(samples, 0);
+                tinnitusClip = clip;
+                tinnitusSource.clip = tinnitusClip;
+                
+                Logger.LogInfo($"[DynamicAudio] Tinnitus generator initialized at {cfg_tinnitusFrequency.Value}Hz");
+            }
+
             originalListenerVolume = AudioListener.volume;
 
             // seed params
@@ -300,7 +335,7 @@ namespace Ravenfield.EchoProbe
             curRefDel = tgtRefDel = 0.03f;
             Apply();
 
-            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass (Dynamic Audio V3.1).");
+            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass + tinnitus generator (Dynamic Audio V3.3.0).");
             // initial scan for audio sources
             ScanAudioSources();
         }
@@ -530,12 +565,12 @@ namespace Ravenfield.EchoProbe
                 accumulatedNoiseForTinnitus += lastRms * Time.unscaledDeltaTime;
                 
                 // Slow natural decay - noise accumulates faster than it decays during sustained fire
-                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.15f * Time.unscaledDeltaTime));
+                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.1f * Time.unscaledDeltaTime));
                 
                 // Trigger tinnitus if accumulated noise exceeds threshold
-                // Threshold is now sensitivity * 3 (so default 0.5 * 3 = 1.5 accumulated RMS units)
-                // This is achievable with sustained automatic fire in enclosed spaces
-                float tinnitusAccumulatedThreshold = cfg_tinnitusSensitivity.Value * 3f;
+                // Threshold is now sensitivity * 2 (so default 0.3 * 2 = 0.6 accumulated RMS units)
+                // This is easily achievable with sustained automatic fire in enclosed spaces
+                float tinnitusAccumulatedThreshold = cfg_tinnitusSensitivity.Value * 2f;
                 
                 if (accumulatedNoiseForTinnitus >= tinnitusAccumulatedThreshold && tinnitusTimeLeft <= 0f)
                 {
@@ -580,7 +615,7 @@ namespace Ravenfield.EchoProbe
                 }
             }
             
-            // Tinnitus handling (only if enabled)
+            // Tinnitus handling (only if enabled) - NOW WITH ACTUAL RINGING SOUND
             if (cfg_enableTinnitus.Value && tinnitusTimeLeft > 0f)
             {
                 tinnitusTimeLeft -= dt;
@@ -595,6 +630,38 @@ namespace Ravenfield.EchoProbe
                 // Reduce overall volume based on tinnitus intensity
                 float tinnitusAttenuation = 1f - (tinnitusCurrentVolume * 0.5f);
                 AudioListener.volume = Mathf.Min(AudioListener.volume, originalListenerVolume * tinnitusAttenuation);
+                
+                // Play the actual tinnitus ringing sound
+                if (tinnitusSource != null && tinnitusClip != null)
+                {
+                    // Update clip frequency dynamically
+                    float[] samples = new float[Mathf.FloorToInt(44100 * 2f)];
+                    for (int i = 0; i < samples.Length; i++)
+                    {
+                        float t = i / 44100f;
+                        samples[i] = Mathf.Sin(2f * Mathf.PI * cfg_tinnitusFrequency.Value * t) * tinnitusCurrentVolume;
+                    }
+                    tinnitusClip.SetData(samples, 0);
+                    
+                    // Start playing if not already
+                    if (!tinnitusSource.isPlaying)
+                    {
+                        tinnitusSource.Play();
+                        Logger.LogInfo($"[DynamicAudio] Tinnitus ringing started at {cfg_tinnitusFrequency.Value}Hz, volume: {tinnitusCurrentVolume:F2}");
+                    }
+                    
+                    // Adjust volume based on current intensity
+                    tinnitusSource.volume = tinnitusCurrentVolume;
+                }
+            }
+            else
+            {
+                // Stop tinnitus sound when effect ends
+                if (tinnitusSource != null && tinnitusSource.isPlaying)
+                {
+                    tinnitusSource.Stop();
+                    Logger.LogInfo("[DynamicAudio] Tinnitus ringing stopped");
+                }
             }
         }
 
