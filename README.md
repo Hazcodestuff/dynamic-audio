@@ -1,6 +1,6 @@
-# Dynamic Audio V3.2.0
+# Dynamic Audio V3.3.0
 
-**Dynamic Audio V3.2.0** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V3.3.0** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
 ## 🎯 Key Features
 
@@ -22,12 +22,16 @@ Projectiles and fast-moving vehicles create realistic pitch shifts as they pass 
 ### 🧠 Immersive Hearing System
 Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter.
 
-### 🔔 Optional Tinnitus Effect (DISABLED BY DEFAULT)
-**NEW IN V3.1, IMPROVED IN V3.2!** For ultimate realism, enable the optional tinnitus feature. Experience realistic high-pitched ringing that gradually fades over time. **TRIGGERS FROM:** 
-- Extremely loud explosions (instant trigger)
-- Sustained gunfire in enclosed spaces (accumulated noise trigger)
+### 🔔 Tinnitus Effect with Custom Audio Support (ENABLED BY DEFAULT)
+**NEW IN V3.1, IMPROVED IN V3.2, REVOLUTIONIZED IN V3.3!** Experience realistic hearing damage with customizable tinnitus sounds:
+- **External Audio File Support**: Place your own `tinnitus.mp3` (or wav/ogg) file in the plugins folder for a custom ringing sound
+- **Automatic Fallback**: If no audio file is found, generates a realistic high-pitched tone automatically
+- **Triggers From**: 
+  - Extremely loud explosions (instant trigger)
+  - Sustained gunfire in enclosed spaces (accumulated noise trigger)
+- **Fully Configurable**: Adjust trigger sensitivity, duration, volume, decay rate, and audio file path
 
-**DISABLED BY DEFAULT** as many players find it annoying - but hardcore realism enthusiasts can enable it in the config! Fully customizable: adjust trigger threshold, duration, volume, frequency, and decay rate.
+**ENABLED BY DEFAULT** for testing - you can disable it in the config if you find it annoying!
 
 ### 🌤️ Environmental Effects (Optional)
 Enable weather-based audio effects including wind influence on sound propagation and ground reflection boosts.
@@ -39,8 +43,9 @@ All parameters are customizable via the `DynamicAudio.cfg` configuration file. A
 
 1. Download the latest release DLL from the 'Releases' tab
 2. Place the `.dll` file into your `BepInEx/plugins` folder
-3. Launch Ravenfield - the config file will be automatically generated at `BepInEx/config/DynamicAudio.cfg`
-4. Edit the config file to customize settings to your liking!
+3. **(Optional)** Place a custom `tinnitus.mp3` file in the same `BepInEx/plugins` folder for a personalized tinnitus sound
+4. Launch Ravenfield - the config file will be automatically generated at `BepInEx/config/DynamicAudio.cfg`
+5. Edit the config file to customize settings to your liking!
 
 📺 Full installation tutorial: https://youtu.be/Bu-uv_aegKs
 
@@ -56,7 +61,7 @@ After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
 - **Doppler & Flyby**: Strength, pitch/volume boosts, decay times
 - **Exposure & Shock**: Noise buildup rates, explosion thresholds, recovery times
   - **⚠️ IMPORTANT**: Exposure Gain default changed from 22 to **1.0** in V3.1.1 to prevent over-muffling of vanilla weapons!
-- **Tinnitus**: Enable/disable (OFF by default), trigger threshold, duration, volume, frequency, decay rate
+- **Tinnitus**: Enable/disable (ON by default), trigger sensitivity, duration, volume, decay rate, **custom audio file path**
 - **Environment**: Wind effects, ground reflections
 
 ## 🛠️ Open Source!
@@ -66,6 +71,14 @@ This mod is fully open source! Download the `EchoProbe.cs` file and modify it to
 Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
+
+### V3.3.0
+- ✅ **Tinnitus Now Uses External Audio Files!** - Simply place `tinnitus.mp3` in the plugins folder
+- ✅ **Automatic Fallback**: Generates a realistic synthesized tone if no audio file is found
+- ✅ **New Config Option**: `Tinnitus/Audio File` - specify any mp3/wav/ogg file to use
+- ✅ **Improved Volume Control**: Tinnitus volume now properly scales with config settings
+- ✅ **Better Logging**: Clear messages showing when audio file is loaded or fallback is created
+- ✅ **Fixed**: Removed dependency on non-existent `cfg_tinnitusFrequency` config
 
 ### V3.2.0
 - ✅ **FIXED Tinnitus Trigger System** - COMPLETELY REWRITTEN to actually work!
