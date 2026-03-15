@@ -1,6 +1,6 @@
-# Dynamic Audio V3.1.1
+# Dynamic Audio V3.2.0
 
-**Dynamic Audio V3.1.1** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V3.2.0** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
 ## 🎯 Key Features
 
@@ -23,7 +23,11 @@ Projectiles and fast-moving vehicles create realistic pitch shifts as they pass 
 Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter.
 
 ### 🔔 Optional Tinnitus Effect (DISABLED BY DEFAULT)
-**NEW IN V3.1!** For ultimate realism, enable the optional tinnitus feature. After extremely loud explosions, experience a realistic high-pitched ringing that gradually fades over time. **DISABLED BY DEFAULT** as many players find it annoying - but hardcore realism enthusiasts can enable it in the config! Fully customizable: adjust trigger threshold, duration, volume, frequency, and decay rate.
+**NEW IN V3.1, IMPROVED IN V3.2!** For ultimate realism, enable the optional tinnitus feature. Experience realistic high-pitched ringing that gradually fades over time. **TRIGGERS FROM:** 
+- Extremely loud explosions (instant trigger)
+- Sustained gunfire in enclosed spaces (accumulated noise trigger)
+
+**DISABLED BY DEFAULT** as many players find it annoying - but hardcore realism enthusiasts can enable it in the config! Fully customizable: adjust trigger threshold, duration, volume, frequency, and decay rate.
 
 ### 🌤️ Environmental Effects (Optional)
 Enable weather-based audio effects including wind influence on sound propagation and ground reflection boosts.
@@ -62,6 +66,15 @@ This mod is fully open source! Download the `EchoProbe.cs` file and modify it to
 Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
+
+### V3.2.0
+- ✅ **IMPROVED Tinnitus Trigger System** - Now triggers from TWO sources:
+  - Instant trigger from extremely loud explosions (peak amplitude)
+  - Accumulated noise trigger from sustained gunfire in enclosed spaces
+- ✅ Added `accumulatedNoiseForTinnitus` tracking with gradual decay
+- ✅ Better logging for tinnitus triggers (explosion vs accumulated noise)
+- ✅ Prevents double-triggering when tinnitus is already active
+- ✅ More realistic hearing damage simulation for continuous combat scenarios
 
 ### V3.1.1
 - ✅ **FIXED**: Exposure Gain default reduced from 22 to **1.0** to prevent excessive muffling of vanilla weapons

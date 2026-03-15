@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Optional Tinnitus
-// Version: 3.1.1 - Dynamic Audio (Fixed excessive Exposure Gain default)
+// Version: 3.2.0 - Dynamic Audio (Fixed tinnitus to trigger from sustained noise accumulation)
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -13,7 +13,7 @@ using System.IO;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.1.1")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.2.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -135,6 +135,7 @@ namespace Ravenfield.EchoProbe
         // tinnitus state
         private float tinnitusTimeLeft;
         private float tinnitusCurrentVolume;
+        private float accumulatedNoiseForTinnitus = 0f; // Tracks cumulative noise for tinnitus trigger
 
         // tracked sources for occlusion + original volume store
         private readonly List<AudioSource> trackedSources = new List<AudioSource>();
@@ -163,7 +164,7 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.1.1)");
+            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.2.0)");
             
             // Setup configuration with custom config file name
             customConfig = new ConfigFile(Path.Combine(Paths.ConfigPath, "DynamicAudio.cfg"), false);
@@ -496,16 +497,17 @@ namespace Ravenfield.EchoProbe
             lastRms = Mathf.Sqrt(sumSq / loudBuf.Length);
             lastPeak = peak;
 
+            // Shock mute/muffle after explosion (instant trigger from very loud peaks)
             if (lastPeak >= cfg_explosionPeakThreshold.Value)
             {
-                // Shock mute/muffle after explosion
                 shockTimeLeft = cfg_shockMuteSeconds.Value + cfg_shockMuffleSeconds.Value;
                 
-                // Trigger tinnitus if enabled and peak exceeds threshold
-                if (cfg_enableTinnitus.Value && lastPeak >= cfg_tinnitusThreshold.Value)
+                // Also trigger tinnitus from instant loud explosions if enabled
+                if (cfg_enableTinnitus.Value && lastPeak >= cfg_tinnitusThreshold.Value && tinnitusTimeLeft <= 0f)
                 {
                     tinnitusTimeLeft = cfg_tinnitusDuration.Value;
                     tinnitusCurrentVolume = cfg_tinnitusVolume.Value;
+                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered by explosion! Peak: {lastPeak:F2}");
                 }
             }
         }
@@ -524,6 +526,25 @@ namespace Ravenfield.EchoProbe
             noiseExposure += add * Time.unscaledDeltaTime;
             noiseExposure -= recovery * Time.unscaledDeltaTime;
             noiseExposure = Mathf.Clamp(noiseExposure, 0f, 100f); // cap exposure
+            
+            // Accumulate noise for tinnitus trigger (only if enabled)
+            if (cfg_enableTinnitus.Value)
+            {
+                accumulatedNoiseForTinnitus += lastRms * Time.unscaledDeltaTime;
+                // Decay accumulated noise over time (slower decay than exposure)
+                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.3f * Time.unscaledDeltaTime));
+                
+                // Trigger tinnitus if accumulated noise exceeds threshold
+                // This makes it trigger from sustained loud noise (like continuous shooting) not just single explosions
+                float tinnitusAccumulatedThreshold = cfg_tinnitusThreshold.Value * 2f; // Higher threshold for accumulated noise
+                if (accumulatedNoiseForTinnitus >= tinnitusAccumulatedThreshold && tinnitusTimeLeft <= 0f)
+                {
+                    tinnitusTimeLeft = cfg_tinnitusDuration.Value;
+                    tinnitusCurrentVolume = cfg_tinnitusVolume.Value;
+                    accumulatedNoiseForTinnitus = 0f; // Reset after triggering
+                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered! Accumulated noise: {accumulatedNoiseForTinnitus:F2}");
+                }
+            }
         }
 
         private void UpdateShockAudio(float dt)
