@@ -1,1 +1,1 @@
-Nothing should be ignored based on the provided file changes. The only modified file is 'EchoProbe.cs', which appears to be a source code file and should not be added to .gitignore.
+Nothing should be ignored based on the provided file changes. The changes only include source code (.cs) and documentation (README.md) files, which should not be added to .gitignore.
