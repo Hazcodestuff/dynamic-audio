@@ -1,6 +1,6 @@
-# Dynamic Audio V3.1
+# Dynamic Audio V3.1.1
 
-**Dynamic Audio V3.1** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V3.1.1** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
 ## 🎯 Key Features
 
@@ -51,6 +51,7 @@ After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
 - **Air Absorption**: Frequency absorption rates, humidity, temperature
 - **Doppler & Flyby**: Strength, pitch/volume boosts, decay times
 - **Exposure & Shock**: Noise buildup rates, explosion thresholds, recovery times
+  - **⚠️ IMPORTANT**: Exposure Gain default changed from 22 to **1.0** in V3.1.1 to prevent over-muffling of vanilla weapons!
 - **Tinnitus**: Enable/disable (OFF by default), trigger threshold, duration, volume, frequency, decay rate
 - **Environment**: Wind effects, ground reflections
 
@@ -61,6 +62,12 @@ This mod is fully open source! Download the `EchoProbe.cs` file and modify it to
 Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
+
+### V3.1.1
+- ✅ **FIXED**: Exposure Gain default reduced from 22 to **1.0** to prevent excessive muffling of vanilla weapons
+- ✅ Updated config description to warn users about the Exposure Gain setting
+- ✅ Vanilla weapons now sound natural without being overly muffled
+- ✅ Users who want stronger muffling can still increase Exposure Gain manually in config
 
 ### V3.1.0
 - ✅ **Optional Tinnitus Effect** - DISABLED BY DEFAULT for player comfort

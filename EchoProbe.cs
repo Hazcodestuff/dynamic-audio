@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Optional Tinnitus
-// Version: 3.1.0 - Dynamic Audio
+// Version: 3.1.1 - Dynamic Audio (Fixed excessive Exposure Gain default)
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -13,7 +13,7 @@ using System.IO;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.1.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.1.1")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -163,7 +163,7 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.1.0)");
+            Logger.LogInfo("[DynamicAudio] Awake (Dynamic Audio V3.1.1)");
             
             // Setup configuration with custom config file name
             customConfig = new ConfigFile(Path.Combine(Paths.ConfigPath, "DynamicAudio.cfg"), false);
@@ -209,7 +209,7 @@ namespace Ravenfield.EchoProbe
             // Loudness / Exposure
             cfg_loudnessSampleInterval = customConfig.Bind("Exposure", "Sample Interval", 0.05f, "How often to sample loudness (seconds).");
             cfg_loudnessSamples = customConfig.Bind("Exposure", "Sample Count", 1024, "Number of samples for loudness calculation.");
-            cfg_exposureGain = customConfig.Bind("Exposure", "Exposure Gain", 22f, "Multiplier for noise exposure buildup.");
+            cfg_exposureGain = customConfig.Bind("Exposure", "Exposure Gain", 1.0f, "Multiplier for noise exposure buildup. LOWER = less muffling. Default 1.0 prevents over-muffling of vanilla weapons.");
             cfg_enclosureGain = customConfig.Bind("Exposure", "Enclosure Gain", 1.8f, "How much enclosure affects exposure.");
             cfg_reverbGain = customConfig.Bind("Exposure", "Reverb Gain", 0.0022f, "How much reverb affects exposure.");
             cfg_exposureDecay = customConfig.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
