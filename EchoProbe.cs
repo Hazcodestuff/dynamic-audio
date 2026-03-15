@@ -539,10 +539,12 @@ namespace Ravenfield.EchoProbe
                 float tinnitusAccumulatedThreshold = cfg_tinnitusThreshold.Value * 2f; // Higher threshold for accumulated noise
                 if (accumulatedNoiseForTinnitus >= tinnitusAccumulatedThreshold && tinnitusTimeLeft <= 0f)
                 {
-                    tinnitusTimeLeft = cfg_tinnitusDuration.Value;
+                    float triggerDuration = cfg_tinnitusDuration.Value;
+                    tinnitusTimeLeft = triggerDuration;
                     tinnitusCurrentVolume = cfg_tinnitusVolume.Value;
+                    float accumulatedValue = accumulatedNoiseForTinnitus; // Store before reset
                     accumulatedNoiseForTinnitus = 0f; // Reset after triggering
-                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered! Accumulated noise: {accumulatedNoiseForTinnitus:F2}");
+                    Logger.LogInfo($"[DynamicAudio] Tinnitus triggered by sustained noise! Accumulated: {accumulatedValue:F2}, Duration: {triggerDuration:F1}s");
                 }
             }
         }
