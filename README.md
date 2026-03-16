@@ -15,7 +15,7 @@ Sound is realistically muffled and blocked by terrain and objects. An enemy firi
 
 ### 🌬️ Air Absorption (IMPROVED IN V5)
 **NEW IN V3!** High frequencies are naturally absorbed as sound travels through air. This effect is influenced by humidity and temperature, making distant sounds more muffled and realistic.
-**V5.3 IMPROVEMENT**: Air absorption now only affects sounds beyond 50m, keeping medium-distance sounds (10-50m) clear and bright for more realistic audio!
+**V5 IMPROVEMENT**: Air absorption now only affects sounds beyond 50m, keeping medium-distance sounds (10-50m) clear and bright for more realistic audio!
 
 ### 🎭 Enhanced Doppler & Flyby Effects
 Projectiles and fast-moving vehicles create realistic pitch shifts as they pass by you. The enhanced flyby system adds volume and pitch boosts for dramatic close calls.
