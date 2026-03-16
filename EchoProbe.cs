@@ -1,9 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
-// + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus (ENABLED BY DEFAULT FOR TESTING)
-// Version: 5.2.0 - TINNITUS FIX: Proper state management, smooth recovery, no permanent muffling.
-// SOUND DELAY FIX v2: Volume-based sound detection, better timer logic, faster volume transitions.
-// IMPROVEMENTS: Smoother tinnitus fade curves, better lowpass restoration, more robust sound event detection.
+// + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus
+// Version: 5.3.0 - PERFORMANCE UPDATE: Optimized for many bots, fixed distant audio muffling, tinnitus disabled by default and only triggers in loud reverberant environments.
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -18,7 +16,7 @@ using System;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.2.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.3.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -247,8 +245,8 @@ namespace Ravenfield.EchoProbe
             cfg_exposureDecay = Config.Bind("Exposure", "Exposure Decay", 6.0f, "Rate at which exposure decays.");
             cfg_exposureQuietRms = Config.Bind("Exposure", "Quiet RMS Threshold", 0.08f, "RMS threshold for quiet recovery.");
             
-            // Tinnitus (ENABLED BY DEFAULT FOR TESTING - set to false if you find it annoying)
-            cfg_enableTinnitus = Config.Bind("Tinnitus", "Enable Tinnitus", true, "Enable tinnitus effect after loud explosions or sustained gunfire (ENABLED BY DEFAULT for testing - set to false if you find it annoying).");
+            // Tinnitus (DISABLED BY DEFAULT - enable if you want the effect)
+            cfg_enableTinnitus = Config.Bind("Tinnitus", "Enable Tinnitus", false, "Enable tinnitus effect after loud explosions or sustained gunfire (DISABLED BY DEFAULT - set to true if you want the effect).");
             cfg_tinnitusSensitivity = Config.Bind("Tinnitus", "Sensitivity", 0.15f, "How easily tinnitus triggers (0.1-1.0). Lower = easier to trigger. For instant explosions: peak must exceed this. For sustained noise: accumulated RMS must exceed this * 2.");
             cfg_tinnitusDuration = Config.Bind("Tinnitus", "Base Duration", 8f, "Base duration of tinnitus effect (seconds).");
             cfg_tinnitusVolume = Config.Bind("Tinnitus", "Ring Volume", 0.5f, "Volume of the tinnitus ringing sound (0-1). Higher = more noticeable ringing.");
@@ -704,13 +702,32 @@ namespace Ravenfield.EchoProbe
             
             // Accumulate noise for tinnitus trigger (only if enabled)
             // This allows tinnitus to trigger from sustained loud noise like automatic weapon fire
+            // IMPORTANT: Only accumulate if reverb level is high enough (loud environment)
             if (cfg_enableTinnitus.Value)
             {
-                // Accumulate RMS over time (sustained noise buildup) - increased accumulation rate
-                accumulatedNoiseForTinnitus += lastRms * Time.unscaledDeltaTime * 2.5f;
+                // Only accumulate noise for tinnitus if we're in a loud/reverberant environment
+                // This prevents tinnitus from triggering in helicopters or quiet areas
+                float reverbIntensity = Mathf.InverseLerp(cfg_minReverbLevel.Value, cfg_maxReverbLevel.Value, curRev);
+                float enclosureFactor = lastEnclosure;
                 
-                // Very slow natural decay - noise accumulates much faster than it decays during sustained fire
-                accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.05f * Time.unscaledDeltaTime));
+                // Require BOTH high reverb AND high enclosure to accumulate noise
+                // This ensures tinnitus only triggers in loud, enclosed spaces with echoes
+                float environmentSeverity = Mathf.Clamp01(reverbIntensity * 0.6f + enclosureFactor * 0.4f);
+                
+                // Only accumulate if environment is severe enough (> 0.5 = moderately loud/enclosed)
+                if (environmentSeverity > 0.5f)
+                {
+                    // Accumulate RMS over time (sustained noise buildup) - increased accumulation rate
+                    accumulatedNoiseForTinnitus += lastRms * Time.unscaledDeltaTime * 2.5f * environmentSeverity;
+                    
+                    // Very slow natural decay - noise accumulates much faster than it decays during sustained fire
+                    accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.05f * Time.unscaledDeltaTime));
+                }
+                else
+                {
+                    // In quiet/open environments, decay accumulated noise faster
+                    accumulatedNoiseForTinnitus = Mathf.Max(0f, accumulatedNoiseForTinnitus - (0.15f * Time.unscaledDeltaTime));
+                }
                 
                 // Trigger tinnitus if accumulated noise exceeds threshold
                 // Threshold is now sensitivity * 1.5 (so default 0.15 * 1.5 = 0.225 accumulated RMS units)
@@ -884,7 +901,12 @@ namespace Ravenfield.EchoProbe
                 return dx.CompareTo(dy);
             });
 
-            for (int i = 0; i < trackedSources.Count && checkedCount < cfg_maxSourcesPerCheck.Value; i++)
+            // PERFORMANCE: Limit checks per frame based on how many sources we have
+            // This prevents lag when there are many bots
+            int maxChecksThisFrame = Mathf.Min(cfg_maxSourcesPerCheck.Value, 
+                                               Mathf.Max(8, trackedSources.Count / 4));
+
+            for (int i = 0; i < trackedSources.Count && checkedCount < maxChecksThisFrame; i++)
             {
                 AudioSource src = trackedSources[i];
                 if (src == null) continue;
@@ -1012,18 +1034,25 @@ namespace Ravenfield.EchoProbe
             float pitchFinal = pitchTarget * (1f + (cfg_flybyPitchBoost.Value - 1f) * flybyFactor);
             float volFinalMul = 1f + (cfg_flybyVolumeBoost.Value - 1f) * flybyFactor;
 
-            // Air absorption: high frequencies absorbed over distance - ENHANCED
+            // Air absorption: high frequencies are absorbed over VERY long distances only
+            // Realistic behavior: distant sounds should be LOUD and ECHOEY, not muffled
+            // Air absorption only becomes noticeable at distances > 50-100 meters
             if (cfg_enableAirAbsorption.Value)
             {
                 // Absorption depends on distance, humidity, and temperature
                 float humidityEffect = Mathf.Lerp(1.5f, 0.5f, cfg_humidityFactor.Value); // dry air absorbs more
                 float tempEffect = Mathf.Lerp(1.2f, 0.8f, Mathf.InverseLerp(-10f, 40f, cfg_temperatureFactor.Value));
                 float absorptionRate = cfg_airAbsorptionRate.Value * humidityEffect * tempEffect;
-                float highFreqLoss = Mathf.Exp(-absorptionRate * distanceToListener);
                 
-                // Apply lowpass filter to simulate air absorption - more aggressive for distant sounds
+                // Only apply significant absorption at VERY long distances (> 50m)
+                // This keeps medium-distance sounds clear and loud as they should be
+                float effectiveDistance = Mathf.Max(0f, distanceToListener - 50f);
+                float highFreqLoss = Mathf.Exp(-absorptionRate * effectiveDistance);
+                
+                // Apply subtle lowpass filter only for very distant sounds
+                // Most sounds should remain clear and bright
                 float cutoffBase = 22000f;
-                float cutoffTarget = Mathf.Lerp(4000f, cutoffBase, highFreqLoss); // Lower minimum for more effect
+                float cutoffTarget = Mathf.Lerp(8000f, cutoffBase, highFreqLoss); // Higher minimum (8kHz instead of 4kHz)
                 
                 // Get or create audio filter component for this source
                 AudioLowPassFilter srcLowpass = src.GetComponent<AudioLowPassFilter>();
@@ -1192,7 +1221,7 @@ namespace Ravenfield.EchoProbe
 
         /// <summary>
         /// Calculate exact distance to all playing audio cues for accurate light vs sound simulation.
-        /// This ensures that sounds from far away sources have proper delay compared to visual effects.
+        /// PERFORMANCE OPTIMIZED: Uses distance culling and early exit for better performance with many bots.
         /// </summary>
         private void UpdateAudioCueDistances()
         {
@@ -1201,10 +1230,14 @@ namespace Ravenfield.EchoProbe
             AudioSource[] allSources = UnityEngine.Object.FindObjectsOfType<AudioSource>();
             int trackedCount = 0;
             
+            // PERFORMANCE: Use a lower max count when there are many sources to prevent lag
+            int effectiveMaxTracked = Mathf.Min(cfg_maxTrackedCues.Value, 
+                                                 trackedSources.Count > 50 ? 32 : cfg_maxTrackedCues.Value);
+            
             foreach (AudioSource src in allSources)
             {
                 if (src == null || !src.isPlaying || src.spatialBlend < 0.1f) continue;
-                if (trackedCount >= cfg_maxTrackedCues.Value) break;
+                if (trackedCount >= effectiveMaxTracked) break;
                 
                 float distance = Vector3.Distance(src.transform.position, ear.position);
                 audioCueDistances[src] = distance;
@@ -1225,24 +1258,25 @@ namespace Ravenfield.EchoProbe
 
         /// <summary>
         /// Detect walls between player and sound sources using raycast from player to surroundings.
-        /// Sounds behind walls will be muffled/attenuated. - ENHANCED IMPLEMENTATION
+        /// Sounds behind walls will be muffled/attenuated. - PERFORMANCE OPTIMIZED
         /// </summary>
         private void DetectWallOcclusions()
         {
             wallOcclusionFactors.Clear();
             
+            // PERFORMANCE: Reduce ray count when there are many sources to prevent lag
+            int effectiveWallRays = trackedSources.Count > 50 ? Mathf.Max(8, cfg_wallRays.Value / 2) : cfg_wallRays.Value;
+            
             // Cast rays from player position in all directions to detect surrounding walls
             int wallHits = 0;
-            List<Vector3> wallDirections = new List<Vector3>();
-            List<RaycastHit> wallHitsInfo = new List<RaycastHit>();
             
             // Use the configured layer mask for occlusion checks
             int layerMask = cfg_occlusionLayerMask.Value;
             
-            for (int i = 0; i < cfg_wallRays.Value; i++)
+            for (int i = 0; i < effectiveWallRays; i++)
             {
                 // Generate evenly distributed rays around the player in 3D sphere pattern
-                float angleH = (i / (float)cfg_wallRays.Value) * Mathf.PI * 2f;
+                float angleH = (i / (float)effectiveWallRays) * Mathf.PI * 2f;
                 float angleV = Mathf.Sin(angleH * 3f) * 0.5f; // Add vertical variation
                 
                 Vector3 dir = new Vector3(
@@ -1255,29 +1289,28 @@ namespace Ravenfield.EchoProbe
                 if (Physics.Raycast(ear.position, dir, out hit, cfg_wallRayDistance.Value, layerMask, QueryTriggerInteraction.Ignore))
                 {
                     wallHits++;
-                    wallDirections.Add(dir);
-                    wallHitsInfo.Add(hit);
                 }
             }
             
-            float wallCoverage = wallHits / (float)cfg_wallRays.Value;
+            float wallCoverage = wallHits / (float)effectiveWallRays;
             
-            // Now check each tracked audio source AND all playing audio sources to see if they're behind a wall
-            HashSet<AudioSource> allSourcesToCheck = new HashSet<AudioSource>(trackedSources);
-            
-            // Also add any playing AudioSource we can find
-            AudioSource[] allAudioSources = UnityEngine.Object.FindObjectsOfType<AudioSource>();
-            foreach (AudioSource src in allAudioSources)
+            // PERFORMANCE: Only check a limited number of sources for wall occlusion
+            // Prioritize closer sources as they matter more
+            List<AudioSource> sortedSources = new List<AudioSource>(trackedSources);
+            sortedSources.Sort((x, y) => 
             {
-                if (src != null && src.isPlaying && src.spatialBlend > 0.1f)
-                {
-                    allSourcesToCheck.Add(src);
-                }
-            }
+                if (!x || !y) return 0;
+                float dx = Vector3.Distance(x.transform.position, ear.position);
+                float dy = Vector3.Distance(y.transform.position, ear.position);
+                return dx.CompareTo(dy);
+            });
             
-            // Check each source for wall occlusion
-            foreach (AudioSource src in allSourcesToCheck)
+            // Check only the closest sources for wall occlusion
+            int maxSourcesToCheck = Mathf.Min(16, sortedSources.Count);
+            
+            for (int i = 0; i < maxSourcesToCheck; i++)
             {
+                AudioSource src = sortedSources[i];
                 if (src == null || !src.isPlaying) continue;
                 
                 Vector3 srcDir = (src.transform.position - ear.position).normalized;
@@ -1290,7 +1323,14 @@ namespace Ravenfield.EchoProbe
                     continue;
                 }
                 
-                // Check if there's a wall between player and source using multiple rays for accuracy
+                // Skip if source is very far (wall occlusion less noticeable)
+                if (srcDistance > cfg_wallRayDistance.Value)
+                {
+                    wallOcclusionFactors[src] = 1.0f;
+                    continue;
+                }
+                
+                // Check if there's a wall between player and source using single ray for performance
                 bool hasWallBetween = false;
                 RaycastHit wallHit;
                 
@@ -1299,28 +1339,10 @@ namespace Ravenfield.EchoProbe
                 {
                     hasWallBetween = true;
                 }
-                else
-                {
-                    // Secondary check: use 3 offset rays for more robust detection (handles thin walls)
-                    Vector3 perpendicular = Vector3.Cross(srcDir, Vector3.up).normalized;
-                    if (perpendicular.magnitude < 0.01f) perpendicular = Vector3.Cross(srcDir, Vector3.right).normalized;
-                    
-                    float offset = 0.5f;
-                    for (int r = -1; r <= 1; r += 2)
-                    {
-                        Vector3 offsetDir = (srcDir + perpendicular * offset * r).normalized;
-                        if (Physics.Raycast(ear.position, offsetDir, out wallHit, srcDistance - 0.5f, layerMask, QueryTriggerInteraction.Ignore))
-                        {
-                            hasWallBetween = true;
-                            break;
-                        }
-                    }
-                }
                 
                 if (hasWallBetween)
                 {
                     // There's a wall blocking direct path - apply strong muffle
-                    // More muffling for thicker/denser obstacles
                     wallOcclusionFactors[src] = cfg_wallMuffleAmount.Value;
                     
                     if (cfg_debugMode.Value == "walls" || cfg_debugMode.Value == "all")
@@ -1339,7 +1361,7 @@ namespace Ravenfield.EchoProbe
             if (cfg_debugMode.Value == "walls" || cfg_debugMode.Value == "all")
             {
                 Logger.LogInfo(string.Format("[DynamicAudio] Wall detection: {0}/{1} rays hit, coverage: {2:P0}, sources checked: {3}", 
-                    wallHits, cfg_wallRays.Value, wallCoverage, allSourcesToCheck.Count));
+                    wallHits, effectiveWallRays, wallCoverage, maxSourcesToCheck));
             }
         }
 
