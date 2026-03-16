@@ -172,13 +172,15 @@ namespace Ravenfield.EchoProbe
         // per-source flyby state
         private readonly Dictionary<AudioSource, float> flybyTimers = new Dictionary<AudioSource, float>();
 
-        // NEW: Sound delay simulation state
+        // NEW: Sound delay simulation state - ROBUST IMPLEMENTATION
         private readonly Dictionary<AudioSource, float> soundDelayTimers = new Dictionary<AudioSource, float>();
         private readonly Dictionary<AudioSource, bool> soundPlayed = new Dictionary<AudioSource, bool>();
+        private readonly Dictionary<AudioSource, float> lastKnownVolume = new Dictionary<AudioSource, float>();
         
         // NEW: Environmental state
-        private float currentTemperature = 20f; // Celsius
+        private float currentTemperature = 20f; // Celsius - USED for air absorption calculations
         private Vector3 windVelocity = Vector3.zero;
+        private float lastEnvironmentalUpdateTime;
 
         // NEW: Distance Calculator & Wall Occlusion state (v4.0.0)
         private readonly Dictionary<AudioSource, float> audioCueDistances = new Dictionary<AudioSource, float>();
@@ -294,7 +296,7 @@ namespace Ravenfield.EchoProbe
             cfg_wallRays = Config.Bind("WallOcclusion", "Wall Rays", 32, "Number of rays to cast around player for wall detection. Higher = more accurate wall detection.");
             cfg_wallRayDistance = Config.Bind("WallOcclusion", "Wall Ray Distance", 25f, "Distance to check for walls around player (meters).");
             cfg_wallMuffleAmount = Config.Bind("WallOcclusion", "Wall Muffle Amount", 0.15f, "Volume multiplier when sound is blocked by a wall (0 = silent, 1 = no change). Lower = more muffled.");
-            cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, all");
+            cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, environment, all");
             cfg_occlusionLayerMask = Config.Bind("WallOcclusion", "Occlusion Layer Mask", -1, "Layer mask for occlusion raycasts. -1 = everything, use layer numbers for filtering.");
         }
 
@@ -311,7 +313,7 @@ namespace Ravenfield.EchoProbe
 
         private void FindOrAttach()
         {
-            listener = Object.FindObjectOfType<AudioListener>();
+            listener = UnityEngine.Object.FindObjectOfType<AudioListener>();
             ear = listener ? listener.transform : null;
 
             if (!listener || !ear)
@@ -445,6 +447,13 @@ namespace Ravenfield.EchoProbe
             {
                 lastWallCheckTime = Time.unscaledTime;
                 DetectWallOcclusions();
+            }
+
+            // NEW: Update environmental effects periodically
+            if (cfg_enableWeatherEffects.Value && Time.unscaledTime - lastEnvironmentalUpdateTime >= 0.5f)
+            {
+                lastEnvironmentalUpdateTime = Time.unscaledTime;
+                UpdateEnvironmentalEffects();
             }
 
             // per-source occlusion checks - runs continuously for robust sound delay
@@ -792,7 +801,7 @@ namespace Ravenfield.EchoProbe
         private void ScanAudioSources()
         {
             trackedSources.Clear();
-            AudioSource[] all = Object.FindObjectsOfType<AudioSource>();
+            AudioSource[] all = UnityEngine.Object.FindObjectsOfType<AudioSource>();
             for (int i = 0; i < all.Length; i++)
             {
                 AudioSource a = all[i];
@@ -992,16 +1001,24 @@ namespace Ravenfield.EchoProbe
                 if (!soundDelayTimers.ContainsKey(src)) 
                 { 
                     soundDelayTimers[src] = 0f; 
-                    soundPlayed[src] = true; 
+                    soundPlayed[src] = true;
+                    lastKnownVolume[src] = src.volume;
                 }
                 
                 // Detect if source just started playing (was not playing before, or finished previous playback)
-                bool wasPlaying = soundPlayed.ContainsKey(src) && src.isPlaying;
-                bool isNewSound = !wasPlaying && src.isPlaying;
+                bool wasPlayingLastFrame = soundPlayed.ContainsKey(src) && soundPlayed[src];
+                bool isCurrentlyPlaying = src.isPlaying;
+                bool isNewSound = !wasPlayingLastFrame && isCurrentlyPlaying;
+                
+                // Also detect new sounds by checking if timer expired and sound is still playing
+                bool timerExpired = soundDelayTimers.ContainsKey(src) && soundDelayTimers[src] <= 0f;
                 
                 // If this is a new sound event, start the delay timer
-                if (isNewSound || soundDelayTimers[src] <= 0f)
+                if (isNewSound || (!timerExpired && soundDelayTimers[src] <= 0f))
                 {
+                    // Store the current volume so we can restore it after delay
+                    lastKnownVolume[src] = originalSourceVolume.ContainsKey(src) ? originalSourceVolume[src] : src.volume;
+                    
                     soundDelayTimers[src] = soundTravelTime;
                     soundPlayed[src] = false; // Mark as not yet played
                     
@@ -1087,6 +1104,31 @@ namespace Ravenfield.EchoProbe
             return (float)hits / (float)checks; // 0..1
         }
 
+        /// <summary>
+        /// Update environmental effects like temperature, humidity, and wind.
+        /// This affects sound propagation speed and air absorption.
+        /// </summary>
+        private void UpdateEnvironmentalEffects()
+        {
+            // Update temperature based on config (could be extended to read from weather mods)
+            currentTemperature = cfg_temperatureFactor.Value;
+            
+            // Calculate wind velocity (simple model - could be extended)
+            float windSpeed = cfg_windEffect.Value * 10f; // Scale wind effect
+            float windAngle = Time.time * 0.1f; // Slowly changing wind direction
+            windVelocity = new Vector3(
+                Mathf.Cos(windAngle) * windSpeed,
+                0f,
+                Mathf.Sin(windAngle) * windSpeed
+            );
+            
+            // Log environmental state for debugging
+            if (cfg_debugMode.Value == "all" || cfg_debugMode.Value == "environment")
+            {
+                Logger.LogInfo($"[DynamicAudio] Environment: Temp={currentTemperature}C, Wind={windVelocity.magnitude:F1} m/s");
+            }
+        }
+
         // ---------------- NEW: Distance Calculator & Wall Occlusion (v4.0.0) ----------------
 
         /// <summary>
@@ -1097,7 +1139,7 @@ namespace Ravenfield.EchoProbe
         {
             audioCueDistances.Clear();
             
-            AudioSource[] allSources = Object.FindObjectsOfType<AudioSource>();
+            AudioSource[] allSources = UnityEngine.Object.FindObjectsOfType<AudioSource>();
             int trackedCount = 0;
             
             foreach (AudioSource src in allSources)
@@ -1165,7 +1207,7 @@ namespace Ravenfield.EchoProbe
             HashSet<AudioSource> allSourcesToCheck = new HashSet<AudioSource>(trackedSources);
             
             // Also add any playing AudioSource we can find
-            AudioSource[] allAudioSources = Object.FindObjectsOfType<AudioSource>();
+            AudioSource[] allAudioSources = UnityEngine.Object.FindObjectsOfType<AudioSource>();
             foreach (AudioSource src in allAudioSources)
             {
                 if (src != null && src.isPlaying && src.spatialBlend > 0.1f)
