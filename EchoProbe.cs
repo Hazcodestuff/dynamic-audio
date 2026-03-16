@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus (ENABLED BY DEFAULT FOR TESTING)
-// Version: 3.3.0 - Tinnitus with External Audio File Support (tinnitus.mp3)
+// Version: 4.0.0 - Fixed config sync, improved sound delay, added distance calculator and wall occlusion detection
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -11,10 +11,11 @@ using UnityEngine.Networking;
 using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "3.3.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "4.0.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -90,6 +91,16 @@ namespace Ravenfield.EchoProbe
         private ConfigEntry<float> cfg_windEffect;
         private ConfigEntry<float> cfg_groundReflectionBoost;
 
+        // NEW: Distance Calculator & Wall Occlusion (v4.0.0)
+        private ConfigEntry<bool> cfg_enableDistanceCalculator;
+        private ConfigEntry<float> cfg_distanceCheckInterval;
+        private ConfigEntry<int> cfg_maxTrackedCues;
+        private ConfigEntry<bool> cfg_enableWallOcclusion;
+        private ConfigEntry<int> cfg_wallRays;
+        private ConfigEntry<float> cfg_wallRayDistance;
+        private ConfigEntry<float> cfg_wallMuffleAmount;
+        private ConfigEntry<string> cfg_debugMode;
+
         // Material early-reflection boost (optional)
         // tags map: tag -> early reflection multiplier
         private readonly Dictionary<string, float> materialEarlyReflection = new Dictionary<string, float>()
@@ -164,12 +175,23 @@ namespace Ravenfield.EchoProbe
         private float currentTemperature = 20f; // Celsius
         private Vector3 windVelocity = Vector3.zero;
 
+        // NEW: Distance Calculator & Wall Occlusion state (v4.0.0)
+        private readonly Dictionary<AudioSource, float> audioCueDistances = new Dictionary<AudioSource, float>();
+        private readonly Dictionary<AudioSource, float> wallOcclusionFactors = new Dictionary<AudioSource, float>();
+        private float lastDistanceCheckTime;
+        private float lastWallCheckTime;
+        private bool configNeedsReload = false;
+        private float lastConfigCheckTime;
+
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V3.3.0 - Tinnitus ENABLED by default for testing");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V4.0.0 - Tinnitus ENABLED by default for testing");
             
             SetupConfig();
+            
+            // Set up config file change listener
+            Config.SettingChanged += (sender, e) => { configNeedsReload = true; };
             
             SceneManager.sceneLoaded += OnSceneLoaded;
             BuildDirections(cfg_rays.Value);
@@ -256,6 +278,16 @@ namespace Ravenfield.EchoProbe
             cfg_enableWeatherEffects = Config.Bind("Environment", "Enable Weather Effects", false, "Enable wind and weather-based audio effects.");
             cfg_windEffect = Config.Bind("Environment", "Wind Effect Strength", 0.1f, "How much wind affects sound propagation.");
             cfg_groundReflectionBoost = Config.Bind("Environment", "Ground Reflection", 1.0f, "Boost to reflections from ground surfaces.");
+
+            // NEW: Distance Calculator & Wall Occlusion (v4.0.0)
+            cfg_enableDistanceCalculator = Config.Bind("DistanceCalculator", "Enable Distance Calculator", true, "Calculate exact distance to all playing audio cues for accurate light vs sound simulation.");
+            cfg_distanceCheckInterval = Config.Bind("DistanceCalculator", "Check Interval", 0.05f, "How often to update distance calculations (seconds). Lower = more accurate but higher CPU usage.");
+            cfg_maxTrackedCues = Config.Bind("DistanceCalculator", "Max Tracked Cues", 32, "Maximum number of audio cues to track simultaneously.");
+            cfg_enableWallOcclusion = Config.Bind("WallOcclusion", "Enable Wall Occlusion", true, "Detect walls between player and sound sources to muffle sounds behind walls.");
+            cfg_wallRays = Config.Bind("WallOcclusion", "Wall Rays", 16, "Number of rays to cast around player for wall detection.");
+            cfg_wallRayDistance = Config.Bind("WallOcclusion", "Wall Ray Distance", 15f, "Distance to check for walls around player (meters).");
+            cfg_wallMuffleAmount = Config.Bind("WallOcclusion", "Wall Muffle Amount", 0.3f, "Volume multiplier when sound is blocked by a wall (0 = silent, 1 = no change).");
+            cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, all");
         }
 
         private void OnSceneLoaded(Scene s, LoadSceneMode m)
@@ -366,6 +398,14 @@ namespace Ravenfield.EchoProbe
                 return;
             }
 
+            // Check for config changes and reload settings
+            if (configNeedsReload && Time.unscaledTime - lastConfigCheckTime > 1f)
+            {
+                lastConfigCheckTime = Time.unscaledTime;
+                configNeedsReload = false;
+                Logger.LogInfo("[DynamicAudio] Config file changed - settings will be reloaded on next use");
+            }
+
             // update listener velocity
             listenerVel = Vector3.Lerp(listenerVel, (ear.position - prevEarPos) / Mathf.Max(0.0001f, Time.unscaledDeltaTime), Time.unscaledDeltaTime * cfg_velocitySmoothing.Value);
             prevEarPos = ear.position;
@@ -383,6 +423,20 @@ namespace Ravenfield.EchoProbe
                 lastLoudSampleTime = Time.unscaledTime;
                 SampleLoudness();
                 UpdateExposure();
+            }
+
+            // NEW: Distance calculator for all audio cues (v4.0.0)
+            if (cfg_enableDistanceCalculator.Value && Time.unscaledTime - lastDistanceCheckTime >= cfg_distanceCheckInterval.Value)
+            {
+                lastDistanceCheckTime = Time.unscaledTime;
+                UpdateAudioCueDistances();
+            }
+
+            // NEW: Wall occlusion detection (v4.0.0)
+            if (cfg_enableWallOcclusion.Value && Time.unscaledTime - lastWallCheckTime >= cfg_distanceCheckInterval.Value)
+            {
+                lastWallCheckTime = Time.unscaledTime;
+                DetectWallOcclusions();
             }
 
             // per-source occlusion checks (right after Probe)
@@ -961,6 +1015,10 @@ namespace Ravenfield.EchoProbe
             if (originalSourceVolume.ContainsKey(src)) origVol = originalSourceVolume[src];
             float desiredVol = Mathf.Clamp(origVol * volFinalMul, 0f, 2f);
             
+            // NEW: Apply wall occlusion factor (v4.0.0)
+            float wallFactor = GetWallOcclusionFactor(src);
+            desiredVol *= wallFactor;
+
             // Only apply volume if not in sound delay mute phase
             if (!cfg_enableSoundDelay.Value || soundDelayTimers.ContainsKey(src) == false || soundDelayTimers[src] <= 0f)
             {
@@ -982,6 +1040,118 @@ namespace Ravenfield.EchoProbe
                     hits++;
             }
             return (float)hits / (float)checks; // 0..1
+        }
+
+        // ---------------- NEW: Distance Calculator & Wall Occlusion (v4.0.0) ----------------
+
+        /// <summary>
+        /// Calculate exact distance to all playing audio cues for accurate light vs sound simulation.
+        /// This ensures that sounds from far away sources have proper delay compared to visual effects.
+        /// </summary>
+        private void UpdateAudioCueDistances()
+        {
+            audioCueDistances.Clear();
+            
+            AudioSource[] allSources = Object.FindObjectsOfType<AudioSource>();
+            int trackedCount = 0;
+            
+            foreach (AudioSource src in allSources)
+            {
+                if (src == null || !src.isPlaying || src.spatialBlend < 0.1f) continue;
+                if (trackedCount >= cfg_maxTrackedCues.Value) break;
+                
+                float distance = Vector3.Distance(src.transform.position, ear.position);
+                audioCueDistances[src] = distance;
+                trackedCount++;
+                
+                // Debug output
+                if (cfg_debugMode.Value == "distances" || cfg_debugMode.Value == "all")
+                {
+                    Logger.LogInfo(string.Format("[DynamicAudio] Audio Cue: {0} @ {1:F1}m", src.gameObject.name, distance));
+                }
+            }
+            
+            if (cfg_debugMode.Value == "distances" || cfg_debugMode.Value == "all")
+            {
+                Logger.LogInfo(string.Format("[DynamicAudio] Tracking {0} audio cues", trackedCount));
+            }
+        }
+
+        /// <summary>
+        /// Detect walls between player and sound sources using raycast from player to surroundings.
+        /// Sounds behind walls will be muffled/attenuated.
+        /// </summary>
+        private void DetectWallOcclusions()
+        {
+            wallOcclusionFactors.Clear();
+            
+            // Cast rays from player position in all directions to detect surrounding walls
+            int wallHits = 0;
+            List<Vector3> wallDirections = new List<Vector3>();
+            
+            for (int i = 0; i < cfg_wallRays.Value; i++)
+            {
+                // Generate evenly distributed rays around the player
+                float angle = (i / (float)cfg_wallRays.Value) * Mathf.PI * 2f;
+                Vector3 dir = new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)).normalized;
+                
+                RaycastHit hit;
+                if (Physics.Raycast(ear.position, dir, out hit, cfg_wallRayDistance.Value, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    wallHits++;
+                    wallDirections.Add(dir);
+                }
+            }
+            
+            float wallCoverage = wallHits / (float)cfg_wallRays.Value;
+            
+            // Now check each tracked audio source to see if it's behind a wall
+            foreach (AudioSource src in trackedSources)
+            {
+                if (src == null || !src.isPlaying) continue;
+                
+                Vector3 srcDir = (src.transform.position - ear.position).normalized;
+                float srcDistance = Vector3.Distance(src.transform.position, ear.position);
+                
+                // Check if there's a wall between player and source
+                RaycastHit wallHit;
+                bool hasWallBetween = Physics.Raycast(ear.position, srcDir, out wallHit, srcDistance - 0.5f, ~0, QueryTriggerInteraction.Ignore);
+                
+                if (hasWallBetween)
+                {
+                    // There's a wall blocking direct path - apply muffle
+                    wallOcclusionFactors[src] = cfg_wallMuffleAmount.Value;
+                    
+                    if (cfg_debugMode.Value == "walls" || cfg_debugMode.Value == "all")
+                    {
+                        Logger.LogInfo(string.Format("[DynamicAudio] WALL OCCLUSION: {0} blocked by {1} at {2:F1}m", 
+                            src.gameObject.name, wallHit.collider.gameObject.name, wallHit.distance));
+                    }
+                }
+                else
+                {
+                    // No wall - full volume
+                    wallOcclusionFactors[src] = 1.0f;
+                }
+            }
+            
+            if (cfg_debugMode.Value == "walls" || cfg_debugMode.Value == "all")
+            {
+                Logger.LogInfo(string.Format("[DynamicAudio] Wall detection: {0}/{1} rays hit, coverage: {2:P0}", 
+                    wallHits, cfg_wallRays.Value, wallCoverage));
+            }
+        }
+
+        /// <summary>
+        /// Get the wall occlusion factor for a specific audio source.
+        /// Returns 1.0f if no occlusion, or a lower value if blocked by wall.
+        /// </summary>
+        private float GetWallOcclusionFactor(AudioSource src)
+        {
+            if (!cfg_enableWallOcclusion.Value) return 1.0f;
+            if (wallOcclusionFactors.ContainsKey(src))
+                return wallOcclusionFactors[src];
+            return 1.0f;
         }
     }
 }
