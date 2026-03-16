@@ -758,7 +758,8 @@ namespace Ravenfield.EchoProbe
                     lowpass.cutoffFrequency = Mathf.Lerp(lowpass.cutoffFrequency, 22000f, 5000f * dt);
                 }
             }
-            
+        }
+        
         // Tinnitus handling (only if enabled) - plays external audio file or fallback tone
         private void UpdateTinnitus(float dt)
         {
@@ -962,9 +963,10 @@ namespace Ravenfield.EchoProbe
 
         // Doppler & Flyby: compute pitch shift and temporary flyby boost
         // Also handles air absorption and optional sound delay simulation - ROBUST IMPLEMENTATION
-        private void ApplyDopplerToSource(AudioSource src, Vector3 srcVelocity, Vector3 listenerVelocityLocal, float distanceToListener, float dt)
+        private void ApplyDopplerToSource(AudioSource src, Vector3 srcVelocity, Vector3 listenerVelocityLocal, float distanceToListener, float deltaTime)
         {
             if (src == null) return;
+            float dt = deltaTime;
 
             // relative velocity along the LOS
             Vector3 LOS = (ear.position - src.transform.position).normalized;
