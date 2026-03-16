@@ -1,6 +1,6 @@
-# Dynamic Audio V3.3.0
+# Dynamic Audio V5.3.0
 
-**Dynamic Audio V3.3.0** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
+**Dynamic Audio V5.3.0** is a complete audio overhaul mod that brings Ravenfield's soundscape to life with unprecedented realism and immersion. This isn't just a sound pack; it's a dynamic audio simulation engine that analyzes your environment in real-time to create an authentic audio experience that reacts to every wall, open field, and obstacle around you.
 
 ## 🎯 Key Features
 
@@ -13,8 +13,9 @@ Sound is realistically muffled and blocked by terrain and objects. An enemy firi
 ### ⚡ Light vs Sound Delay Simulation
 **NEW IN V3!** Experience realistic physics where light travels faster than sound. When a distant explosion occurs, you'll see the flash first, then hear the boom after a realistic delay based on the distance. Configure the sound speed and maximum delay to your liking!
 
-### 🌬️ Air Absorption
+### 🌬️ Air Absorption (IMPROVED IN V5.3)
 **NEW IN V3!** High frequencies are naturally absorbed as sound travels through air. This effect is influenced by humidity and temperature, making distant sounds more muffled and realistic.
+**V5.3 IMPROVEMENT**: Air absorption now only affects sounds beyond 50m, keeping medium-distance sounds (10-50m) clear and bright for more realistic audio!
 
 ### 🎭 Enhanced Doppler & Flyby Effects
 Projectiles and fast-moving vehicles create realistic pitch shifts as they pass by you. The enhanced flyby system adds volume and pitch boosts for dramatic close calls.
@@ -22,22 +23,28 @@ Projectiles and fast-moving vehicles create realistic pitch shifts as they pass 
 ### 🧠 Immersive Hearing System
 Loud sounds have consequences! Sustained gunfire and nearby explosions build up "noise exposure," causing temporary muffling. Massive explosions can cause a "shell-shock" effect, briefly deafening you and applying a low-pass filter.
 
-### 🔔 Tinnitus Effect with Custom Audio Support (ENABLED BY DEFAULT)
-**NEW IN V3.1, IMPROVED IN V3.2, REVOLUTIONIZED IN V3.3!** Experience realistic hearing damage with customizable tinnitus sounds:
+### 🔔 Tinnitus Effect with Custom Audio Support (DISABLED BY DEFAULT)
+**NEW IN V3.1, IMPROVED IN V3.2, REVOLUTIONIZED IN V3.3, SMARTER IN V5.3!** Experience realistic hearing damage with customizable tinnitus sounds:
 - **External Audio File Support**: Place your own `tinnitus.mp3` (or wav/ogg) file in the plugins folder for a custom ringing sound
 - **Automatic Fallback**: If no audio file is found, generates a realistic high-pitched tone automatically
-- **Triggers From**: 
-  - Extremely loud explosions (instant trigger)
-  - Sustained gunfire in enclosed spaces (accumulated noise trigger)
+- **Smart Trigger System (V5.3)**: Now only triggers in LOUD, REVERBERANT environments (requires BOTH high reverb AND high enclosure)
+  - No more random tinnitus in helicopters or open areas!
+  - Triggers from extremely loud explosions in enclosed spaces
+  - Sustained gunfire in tight spaces can still build up to trigger it
 - **Fully Configurable**: Adjust trigger sensitivity, duration, volume, decay rate, and audio file path
 
-**ENABLED BY DEFAULT** for testing - you can disable it in the config if you find it annoying!
+**DISABLED BY DEFAULT** in V5.3+ - enable it in the config if you want the effect!
 
 ### 🌤️ Environmental Effects (Optional)
 Enable weather-based audio effects including wind influence on sound propagation and ground reflection boosts.
 
 ### ⚙️ Fully Configurable
 All parameters are customizable via the `DynamicAudio.cfg` configuration file. Adjust reverb, occlusion, sound delay, air absorption, tinnitus settings, and more to match your preferences!
+
+**V5.3 Performance Features**:
+- Dynamic scaling automatically reduces computational load during intense battles with many bots
+- Configurable limits for ray count, source tracking, and wall detection
+- Optimized defaults provide best balance between quality and performance
 
 ## 📦 Installation
 
@@ -61,7 +68,7 @@ After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
 - **Doppler & Flyby**: Strength, pitch/volume boosts, decay times
 - **Exposure & Shock**: Noise buildup rates, explosion thresholds, recovery times
   - **⚠️ IMPORTANT**: Exposure Gain default changed from 22 to **1.0** in V3.1.1 to prevent over-muffling of vanilla weapons!
-- **Tinnitus**: Enable/disable (ON by default), trigger sensitivity, duration, volume, decay rate, **custom audio file path**
+- **Tinnitus**: Enable/disable (OFF by default in V5.3+), smart trigger system, sensitivity, duration, volume, decay rate, **custom audio file path**
 - **Environment**: Wind effects, ground reflections
 
 ## 🛠️ Open Source!
@@ -71,6 +78,25 @@ This mod is fully open source! Download the `EchoProbe.cs` file and modify it to
 Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
+
+### V5.3.0
+- ✅ **PERFORMANCE OPTIMIZATIONS** - Major improvements for battles with many bots!
+  - Dynamic source occlusion scaling: checks fewer sources per frame when >50 sources present
+  - Distance calculator reduces tracking limit under heavy load
+  - Wall detection uses 75% fewer rays (1 ray instead of 4 per source)
+  - Only checks closest 16 sources for wall detection instead of ALL sources
+  - Halved ray count when many sources are present
+- ✅ **Tinnitus Fixed & Improved**:
+  - **DISABLED BY DEFAULT** - no more annoying random ringing!
+  - **Smart Trigger System**: Now requires BOTH high reverb AND high enclosure to trigger
+  - Fixed helicopter issue - tinnitus no longer triggers randomly while flying
+  - Only activates in genuinely loud, reverberant environments
+- ✅ **Distant Audio No Longer Muffled**:
+  - Air absorption now only affects sounds beyond 50m distance
+  - Medium-distance sounds (10-50m) stay clear and bright
+  - Minimum cutoff raised from 4kHz to 8kHz for better clarity
+  - Realistic behavior: distant gunshots/explosions are LOUD and ECHOEY, not muffled
+- ✅ **More Realistic Sound Propagation**: Echoes instead of muffling for distant sounds
 
 ### V3.3.0
 - ✅ **Tinnitus Now Uses External Audio Files!** - Simply place `tinnitus.mp3` in the plugins folder
