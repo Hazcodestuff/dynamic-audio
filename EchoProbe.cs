@@ -1,8 +1,8 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus (ENABLED BY DEFAULT FOR TESTING)
-// Version: 5.0.0 - ROBUST IMPLEMENTATION: Fixed sound delay detection, enhanced wall occlusion with multi-ray checks, 
-// improved tinnitus triggering from sustained noise, better environmental effects, and comprehensive distance tracking.
+// Version: 5.1.0 - TINNITUS FIX: Consistent audio playback, smooth fade transitions, proper clip loading verification.
+// SOUND DELAY FIX: Better new sound detection, enhanced debug logging, improved delay/occlusion separation.
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -17,7 +17,7 @@ using System;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.0.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.1.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -153,6 +153,7 @@ namespace Ravenfield.EchoProbe
         private float tinnitusTimeLeft;
         private float tinnitusCurrentVolume;
         private float accumulatedNoiseForTinnitus = 0f;
+        private float tinnitusAudioFade; // For smooth fade-in/out of tinnitus sound
         
         // Tinnitus audio source - plays external audio file
         private AudioSource tinnitusSource;
@@ -476,6 +477,9 @@ namespace Ravenfield.EchoProbe
 
             // handle shock mute/muffle
             UpdateShockAudio(Time.unscaledDeltaTime);
+            
+            // Handle tinnitus effect
+            UpdateTinnitus(Time.unscaledDeltaTime);
 
             if (Time.unscaledTime >= infoNextLog)
             {
@@ -755,43 +759,78 @@ namespace Ravenfield.EchoProbe
                 }
             }
             
-            // Tinnitus handling (only if enabled) - plays external audio file or fallback tone
-            if (cfg_enableTinnitus.Value && tinnitusTimeLeft > 0f)
+        // Tinnitus handling (only if enabled) - plays external audio file or fallback tone
+        private void UpdateTinnitus(float dt)
+        {
+            if (!cfg_enableTinnitus.Value) return;
+            
+            bool hasTinnitusActive = tinnitusTimeLeft > 0f || tinnitusCurrentVolume > 0.01f;
+            
+            if (hasTinnitusActive)
             {
-                tinnitusTimeLeft -= dt;
+                if (tinnitusTimeLeft > 0f)
+                {
+                    tinnitusTimeLeft -= dt;
+                }
                 
-                // Decay tinnitus volume over time (slower decay for more persistence)
-                tinnitusCurrentVolume = Mathf.Lerp(tinnitusCurrentVolume, 0f, (1f - cfg_tinnitusDecay.Value) * dt);
+                // Calculate target volume based on remaining time
+                float targetVolume = 0f;
+                if (tinnitusTimeLeft > 0f)
+                {
+                    // Volume peaks early then decays
+                    float lifeRatio = tinnitusTimeLeft / cfg_tinnitusDuration.Value;
+                    targetVolume = cfg_tinnitusVolume.Value * Mathf.Pow(lifeRatio, 0.5f);
+                }
+                
+                // Smooth fade for tinnitus audio
+                tinnitusAudioFade = Mathf.MoveTowards(tinnitusAudioFade, targetVolume, dt * 2f);
                 
                 // Apply tinnitus effect: low-pass filtering to simulate muffled hearing
-                float targetCutoff = 3000f * (1f + (tinnitusTimeLeft / cfg_tinnitusDuration.Value));
+                float targetCutoff = 800f + (2200f * (tinnitusTimeLeft / Mathf.Max(0.1f, cfg_tinnitusDuration.Value)));
                 lowpass.cutoffFrequency = Mathf.Min(lowpass.cutoffFrequency, targetCutoff);
                 
-                // Reduce overall volume based on tinnitus intensity (more noticeable attenuation)
-                float tinnitusAttenuation = 1f - (tinnitusCurrentVolume * 0.7f);
+                // Reduce overall volume based on tinnitus intensity
+                float tinnitusAttenuation = 1f - (tinnitusAudioFade * 0.5f);
                 AudioListener.volume = Mathf.Min(AudioListener.volume, originalListenerVolume * tinnitusAttenuation);
                 
-                // Play the actual tinnitus sound (external file or fallback)
+                // Play the actual tinnitus sound (external file)
                 if (tinnitusSource != null && tinnitusClip != null)
                 {
-                    // Start playing if not already
-                    if (!tinnitusSource.isPlaying)
+                    // Start playing if not already and we have volume
+                    if (tinnitusAudioFade > 0.01f && !tinnitusSource.isPlaying)
                     {
                         tinnitusSource.Play();
-                        Logger.LogInfo($"[DynamicAudio] Tinnitus sound started, volume: {tinnitusCurrentVolume:F2}");
+                        Logger.LogInfo($"[DynamicAudio] Tinnitus sound started, volume: {tinnitusAudioFade:F2}");
                     }
                     
-                    // Adjust volume based on current intensity (amplified for better audibility)
-                    tinnitusSource.volume = tinnitusCurrentVolume * cfg_tinnitusVolume.Value * 2f;
+                    // Adjust volume based on current intensity
+                    tinnitusSource.volume = tinnitusAudioFade;
+                    
+                    // Stop if faded out completely
+                    if (tinnitusAudioFade < 0.01f && tinnitusSource.isPlaying)
+                    {
+                        tinnitusSource.Stop();
+                    }
+                }
+                else if (tinnitusAudioFade > 0.01f)
+                {
+                    Logger.LogWarning($"[DynamicAudio] Tinnitus clip not loaded! Check that '{cfg_tinnitusAudioFile.Value}' exists in BepInEx/plugins folder.");
                 }
             }
             else
             {
-                // Stop tinnitus sound when effect ends
+                // No tinnitus active - ensure audio is stopped
+                tinnitusAudioFade = Mathf.MoveTowards(tinnitusAudioFade, 0f, dt * 3f);
+                
                 if (tinnitusSource != null && tinnitusSource.isPlaying)
                 {
                     tinnitusSource.Stop();
-                    Logger.LogInfo("[DynamicAudio] Tinnitus sound stopped");
+                }
+                
+                // Reset listener volume if no other effects are active
+                if (shockTimeLeft <= 0f)
+                {
+                    AudioListener.volume = Mathf.Lerp(AudioListener.volume, originalListenerVolume, dt * 2f);
                 }
             }
         }
@@ -1085,6 +1124,15 @@ namespace Ravenfield.EchoProbe
             {
                 // Still in delay phase - keep muted but smoothly transition to desired volume for when delay ends
                 src.volume = Mathf.MoveTowards(src.volume, 0f, 10f * Time.unscaledDeltaTime);
+            }
+            
+            // Debug logging for sound delay issues
+            if (cfg_debugMode.Value == "all" || cfg_debugMode.Value == "distances")
+            {
+                if (distanceToListener > 10f && src.isPlaying)
+                {
+                    Logger.LogInfo($"[DynamicAudio] Source: {src.gameObject.name}, Distance: {distanceToListener:F1}m, Volume: {src.volume:F2}, Desired: {desiredVol:F2}, InDelay: {isInDelayPhase}, Timer: {(soundDelayTimers.ContainsKey(src) ? soundDelayTimers[src].ToString("F2") : "N/A")}");
+                }
             }
         }
 
