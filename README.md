@@ -54,7 +54,7 @@ All parameters are customizable via the `DynamicAudio.cfg` configuration file. A
 4. Launch Ravenfield - the config file will be automatically generated at `BepInEx/config/DynamicAudio.cfg`
 5. Edit the config file to customize settings to your liking!
 
-📺 Full installation tutorial: https://youtu.be/Bu-uv_aegKs
+📺 Full installation tutorial: https://youtu.be/JWvBX3oYIs8
 
 ## ⚙️ Configuration
 
