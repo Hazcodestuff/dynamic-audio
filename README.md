@@ -75,6 +75,15 @@ After first launch, edit `BepInEx/config/DynamicAudio.cfg` to customize:
 
 This mod is fully open source! Download the `EchoProbe.cs` file and modify it to your heart's content. Want to add new features or tweak existing ones? Go ahead! The code is well-commented and C# 7.3 compatible.
 
+How?
+1) Download EchoProbe.cs
+2) Open it up via Visual Studio 2019
+3) Make sure to add the Ravenfield's assembly-csharp, bepinex, 0harmony dlls into the reference
+4) Change up the script
+5) Click build > build solution
+6) Find the project file folder > bin > debug > RavenfieldFPSMod.dll (This used to be a different project lol)
+7) Copy that and paste it inside BepInEx > Plugin
+
 Feel free to experiment and share your improvements with the community!
 
 ## 📝 Version History
