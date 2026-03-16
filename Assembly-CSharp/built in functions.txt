@@ -1,0 +1,33 @@
+Built-in functions
+table class()
+Creates a Lua class.
+
+table class(table base)
+Creates a Lua class that inherits from base:
+
+foo = class()
+bar = class(foo)
+void behaviour(string name)
+Creates a Ravenscript behaviour class with the given name. See Behaviours for details.
+
+behaviour("Rachael") -- conceptually equal to `Rachael = class()`
+
+function Rachael:Start()
+    print("Hello World")
+end
+void table.add_range(table A, table B)
+Sequentially adds all elements from B to the end of A.
+
+table.add_range = function(A, B)
+        for i,v in ipairs(B) do
+                table.insert(A, v)
+        end
+end
+void table.merge(table A, table B)
+Adds all elements from B into A while replacing existing elements with the same key.
+
+table.merge = function(A, B)
+        for i,v in next, B do
+                A[i] = v
+        end
+end

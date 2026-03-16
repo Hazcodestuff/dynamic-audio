@@ -1,0 +1,63 @@
+using System;
+using UnityEngine;
+
+// Token: 0x02000252 RID: 594
+public class Plane : Vehicle, IAutoUpgradeComponent
+{
+	// Token: 0x0600155B RID: 5467 RVA: 0x00075734 File Offset: 0x00073934
+	public Type GetUpgradeType()
+	{
+		return typeof(Airplane);
+	}
+
+	// Token: 0x040014B1 RID: 5297
+	public AnimationCurve liftVsAngleOfAttack;
+
+	// Token: 0x040014B2 RID: 5298
+	public AnimationCurve controlVsAngleOfAttack;
+
+	// Token: 0x040014B3 RID: 5299
+	public Transform thruster;
+
+	// Token: 0x040014B4 RID: 5300
+	public float baseLift = 0.5f;
+
+	// Token: 0x040014B5 RID: 5301
+	public new float acceleration = 10f;
+
+	// Token: 0x040014B6 RID: 5302
+	public float accelerationThrottleUp = 12f;
+
+	// Token: 0x040014B7 RID: 5303
+	public float accelerationThrottleDown = 8f;
+
+	// Token: 0x040014B8 RID: 5304
+	public float throttleEngineAudioPitchControl = 0.1f;
+
+	// Token: 0x040014B9 RID: 5305
+	public float autoPitchTorqueGain = -0.001f;
+
+	// Token: 0x040014BA RID: 5306
+	public float perpendicularDrag = 1f;
+
+	// Token: 0x040014BB RID: 5307
+	public float pitchSensitivity = 1f;
+
+	// Token: 0x040014BC RID: 5308
+	public float yawSensitivity = 0.5f;
+
+	// Token: 0x040014BD RID: 5309
+	public float rollSensitivity = 1f;
+
+	// Token: 0x040014BE RID: 5310
+	public float liftGainTime = 7f;
+
+	// Token: 0x040014BF RID: 5311
+	public float controlWhenBurning = 0.1f;
+
+	// Token: 0x040014C0 RID: 5312
+	public float flightAltitudeMultiplier = 1f;
+
+	// Token: 0x040014C1 RID: 5313
+	public GameObject[] landingGearActivationObjects;
+}

@@ -1,0 +1,326 @@
+using System;
+using System.Collections;
+using UnityEngine;
+
+// Token: 0x02000089 RID: 137
+public class MeleeWeapon : Weapon
+{
+	// Token: 0x06000682 RID: 1666 RVA: 0x00027FC3 File Offset: 0x000261C3
+	protected override void SetupTeammateDangerRange(Projectile projectile)
+	{
+		this.teammateDangerRange = -1f;
+	}
+
+	// Token: 0x06000683 RID: 1667 RVA: 0x00027FD0 File Offset: 0x000261D0
+	protected override bool Shoot(Vector3 direction, bool useMuzzleDirection)
+	{
+		if (!base.Shoot(direction, useMuzzleDirection))
+		{
+			return false;
+		}
+		base.StartCoroutine(this.Swing());
+		return true;
+	}
+
+	// Token: 0x06000684 RID: 1668 RVA: 0x00027FEC File Offset: 0x000261EC
+	protected override Projectile SpawnProjectile(Vector3 direction, Vector3 muzzlePosition, bool hasUser)
+	{
+		return null;
+	}
+
+	// Token: 0x06000685 RID: 1669 RVA: 0x00027FEF File Offset: 0x000261EF
+	private IEnumerator Swing()
+	{
+		if (base.user != null)
+		{
+			base.user.EmoteSwing();
+		}
+		yield return new WaitForSeconds(this.swingTime);
+		if (base.user != null)
+		{
+			this.ShootMeleeRay();
+		}
+		yield break;
+	}
+
+	// Token: 0x06000686 RID: 1670 RVA: 0x00028000 File Offset: 0x00026200
+	public void SphereCast(Ray ray, float distance, int mask, out RaycastHit hitWall, out MeleeWeapon.RaycastHitHitbox hitEnemy, out MeleeWeapon.RaycastHitHitbox hitAlly, out RaycastHit hitVehicle)
+	{
+		hitWall = new RaycastHit
+		{
+			distance = float.MaxValue
+		};
+		hitEnemy = new MeleeWeapon.RaycastHitHitbox
+		{
+			hitInfo = new RaycastHit
+			{
+				distance = float.MaxValue
+			}
+		};
+		hitAlly = new MeleeWeapon.RaycastHitHitbox
+		{
+			hitInfo = new RaycastHit
+			{
+				distance = float.MaxValue
+			}
+		};
+		hitVehicle = new RaycastHit
+		{
+			distance = float.MaxValue
+		};
+		int num = Physics.SphereCastNonAlloc(ray, this.radius, MeleeWeapon.hitResults, distance, mask);
+		int i = 0;
+		while (i < num)
+		{
+			RaycastHit raycastHit = MeleeWeapon.hitResults[i];
+			int layer = raycastHit.collider.gameObject.layer;
+			if (Hitbox.IsHitboxLayer(layer))
+			{
+				try
+				{
+					Hitbox component = raycastHit.collider.GetComponent<Hitbox>();
+					if (component.parent == base.user)
+					{
+						goto IL_1A5;
+					}
+					MeleeWeapon.RaycastHitHitbox b = new MeleeWeapon.RaycastHitHitbox
+					{
+						hitInfo = raycastHit,
+						hitbox = component
+					};
+					if (component.parent.team == base.user.team)
+					{
+						hitAlly = this.Closest(hitAlly, b);
+					}
+					else
+					{
+						hitEnemy = this.Closest(hitEnemy, b);
+					}
+					goto IL_1A5;
+				}
+				catch (Exception e)
+				{
+					ModManager.HandleModException(e);
+					goto IL_1A5;
+				}
+				goto IL_16B;
+			}
+			goto IL_16B;
+			IL_1A5:
+			i++;
+			continue;
+			IL_16B:
+			if (layer == 12)
+			{
+				hitVehicle = this.Closest(hitVehicle, raycastHit);
+				goto IL_1A5;
+			}
+			if (layer != 18)
+			{
+				hitWall = this.Closest(hitWall, raycastHit);
+				goto IL_1A5;
+			}
+			goto IL_1A5;
+		}
+	}
+
+	// Token: 0x06000687 RID: 1671 RVA: 0x000281D0 File Offset: 0x000263D0
+	public RaycastHit Closest(RaycastHit a, RaycastHit b)
+	{
+		if (a.distance < b.distance)
+		{
+			return a;
+		}
+		return b;
+	}
+
+	// Token: 0x06000688 RID: 1672 RVA: 0x000281E5 File Offset: 0x000263E5
+	public MeleeWeapon.RaycastHitHitbox Closest(MeleeWeapon.RaycastHitHitbox a, MeleeWeapon.RaycastHitHitbox b)
+	{
+		if (a.hitInfo.distance < b.hitInfo.distance)
+		{
+			return a;
+		}
+		return b;
+	}
+
+	// Token: 0x06000689 RID: 1673 RVA: 0x00028204 File Offset: 0x00026404
+	protected virtual void ShootMeleeRay()
+	{
+		float num = this.radius * 2f;
+		Vector3 vector = base.user.controller.FacingDirection();
+		Ray ray = new Ray(base.transform.position - vector * num, base.user.controller.FacingDirection());
+		bool flag = base.user.DisableHitboxColliders();
+		RaycastHit raycastHit;
+		MeleeWeapon.RaycastHitHitbox hit;
+		MeleeWeapon.RaycastHitHitbox hit2;
+		RaycastHit raycastHit2;
+		this.SphereCast(ray, this.range + num, 70913, out raycastHit, out hit, out hit2, out raycastHit2);
+		float num2 = Mathf.Min(raycastHit.distance, raycastHit2.distance);
+		if (this.HitIsValid(hit) && hit.hitInfo.distance < num2)
+		{
+			this.DamageHitbox(vector, hit);
+		}
+		else if (this.HitIsValid(hit2) && hit2.hitInfo.distance < num2)
+		{
+			if (base.UserIsPlayer())
+			{
+				this.DamageHitbox(vector, hit2);
+			}
+		}
+		else if (this.HitIsValid(raycastHit2))
+		{
+			this.HitVehicle(vector, raycastHit2);
+		}
+		else if (this.HitIsValid(raycastHit))
+		{
+			Rigidbody attachedRigidbody = raycastHit.collider.attachedRigidbody;
+			Destructible componentInParent = raycastHit.collider.GetComponentInParent<Destructible>();
+			if (attachedRigidbody != null)
+			{
+				this.HitRigidbody(vector, attachedRigidbody, raycastHit);
+			}
+			if (componentInParent != null)
+			{
+				this.HitDestructible(vector, raycastHit, componentInParent);
+			}
+		}
+		if (flag)
+		{
+			base.user.EnableHitboxColliders();
+		}
+	}
+
+	// Token: 0x0600068A RID: 1674 RVA: 0x00028360 File Offset: 0x00026560
+	private void HitDestructible(Vector3 direction, RaycastHit hit, Destructible destructible)
+	{
+		if (!destructible.takesMeleeDamage)
+		{
+			return;
+		}
+		if (this.randomHitSounds.Length != 0)
+		{
+			this.audio.PlayOneShot(this.randomHitSounds[Random.Range(0, this.randomHitSounds.Length)]);
+		}
+		else
+		{
+			this.audio.PlayOneShot(this.hitSound);
+		}
+		DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.Melee, base.user, this)
+		{
+			healthDamage = this.damage,
+			balanceDamage = this.balanceDamage,
+			point = hit.point,
+			direction = direction,
+			impactForce = direction * this.force
+		};
+		destructible.Damage(info);
+	}
+
+	// Token: 0x0600068B RID: 1675 RVA: 0x00028410 File Offset: 0x00026610
+	protected virtual void HitVehicle(Vector3 direction, RaycastHit hitInfo)
+	{
+		Rigidbody attachedRigidbody = hitInfo.collider.attachedRigidbody;
+		if (attachedRigidbody != null)
+		{
+			this.HitRigidbody(direction, attachedRigidbody, hitInfo);
+		}
+	}
+
+	// Token: 0x0600068C RID: 1676 RVA: 0x0002843C File Offset: 0x0002663C
+	protected void HitRigidbody(Vector3 direction, Rigidbody rigidbody, RaycastHit hitInfo)
+	{
+		rigidbody.AddForceAtPosition(direction * this.force, hitInfo.point, ForceMode.Impulse);
+	}
+
+	// Token: 0x0600068D RID: 1677 RVA: 0x00028458 File Offset: 0x00026658
+	private void DamageHitbox(Vector3 direction, MeleeWeapon.RaycastHitHitbox hit)
+	{
+		if (this.randomHitSounds.Length != 0)
+		{
+			this.audio.PlayOneShot(this.randomHitSounds[Random.Range(0, this.randomHitSounds.Length)]);
+		}
+		else
+		{
+			this.audio.PlayOneShot(this.hitSound);
+		}
+		Vector3 impactForce = direction * this.force;
+		DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.Melee, base.user, this)
+		{
+			healthDamage = this.damage,
+			balanceDamage = this.balanceDamage,
+			point = hit.hitInfo.point,
+			direction = direction,
+			impactForce = impactForce
+		};
+		hit.hitbox.parent.Damage(info);
+		if (hit.hitInfo.collider.attachedRigidbody != null)
+		{
+			this.HitRigidbody(direction, hit.hitInfo.collider.attachedRigidbody, hit.hitInfo);
+		}
+	}
+
+	// Token: 0x0600068E RID: 1678 RVA: 0x00028545 File Offset: 0x00026745
+	private bool HitIsValid(RaycastHit hit)
+	{
+		return hit.collider != null;
+	}
+
+	// Token: 0x0600068F RID: 1679 RVA: 0x00028554 File Offset: 0x00026754
+	private bool HitIsValid(MeleeWeapon.RaycastHitHitbox hit)
+	{
+		return this.HitIsValid(hit.hitInfo);
+	}
+
+	// Token: 0x06000690 RID: 1680 RVA: 0x00028562 File Offset: 0x00026762
+	public override Transform CurrentMuzzle()
+	{
+		return base.transform;
+	}
+
+	// Token: 0x06000691 RID: 1681 RVA: 0x0002856A File Offset: 0x0002676A
+	public override bool IsMeleeWeapon()
+	{
+		return true;
+	}
+
+	// Token: 0x040005E6 RID: 1510
+	private const int HIT_MASK = 70913;
+
+	// Token: 0x040005E7 RID: 1511
+	public float radius = 0.4f;
+
+	// Token: 0x040005E8 RID: 1512
+	public float range = 2f;
+
+	// Token: 0x040005E9 RID: 1513
+	public float swingTime = 0.15f;
+
+	// Token: 0x040005EA RID: 1514
+	public float damage = 55f;
+
+	// Token: 0x040005EB RID: 1515
+	public float balanceDamage = 150f;
+
+	// Token: 0x040005EC RID: 1516
+	public float force = 100f;
+
+	// Token: 0x040005ED RID: 1517
+	public AudioClip hitSound;
+
+	// Token: 0x040005EE RID: 1518
+	public AudioClip[] randomHitSounds;
+
+	// Token: 0x040005EF RID: 1519
+	private static RaycastHit[] hitResults = new RaycastHit[64];
+
+	// Token: 0x0200079F RID: 1951
+	public struct RaycastHitHitbox
+	{
+		// Token: 0x040028A3 RID: 10403
+		public RaycastHit hitInfo;
+
+		// Token: 0x040028A4 RID: 10404
+		public Hitbox hitbox;
+	}
+}

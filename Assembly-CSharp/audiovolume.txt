@@ -1,0 +1,39 @@
+using System;
+using UnityEngine;
+using UnityEngine.Video;
+
+// Token: 0x020000B3 RID: 179
+public class AudioVolume : MonoBehaviour
+{
+	// Token: 0x0600085B RID: 2139 RVA: 0x00031C04 File Offset: 0x0002FE04
+	private void Start()
+	{
+		base.GetComponent<AudioSource>().volume *= Mathf.Clamp01(PlayerPrefs.GetFloat("s_" + this.optionId.ToString(), 1f));
+		if (this.autoPlay)
+		{
+			base.Invoke("Play", this.autoPlayDelay);
+		}
+	}
+
+	// Token: 0x0600085C RID: 2140 RVA: 0x00031C68 File Offset: 0x0002FE68
+	private void Play()
+	{
+		AudioSource component = base.GetComponent<AudioSource>();
+		VideoPlayer component2 = base.GetComponent<VideoPlayer>();
+		if (component2 != null)
+		{
+			component2.Play();
+			return;
+		}
+		component.Play();
+	}
+
+	// Token: 0x04000794 RID: 1940
+	public OptionSlider.Id optionId;
+
+	// Token: 0x04000795 RID: 1941
+	public bool autoPlay = true;
+
+	// Token: 0x04000796 RID: 1942
+	public float autoPlayDelay;
+}

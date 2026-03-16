@@ -1,0 +1,97 @@
+using System;
+using Lua;
+using UnityEngine;
+
+// Token: 0x02000064 RID: 100
+public class SoundBank : MonoBehaviour
+{
+	// Token: 0x06000577 RID: 1399 RVA: 0x0002334C File Offset: 0x0002154C
+	public virtual void Start()
+	{
+		try
+		{
+			if (this.audioSource == null)
+			{
+				this.audioSource = base.GetComponent<AudioSource>();
+			}
+			if (this.audioSource != null && this.audioSource.outputAudioMixerGroup == null)
+			{
+				this.audioSource.outputAudioMixerGroup = GameManager.instance.worldMixerGroup;
+			}
+			this.lastIndex = Random.Range(0, this.clips.Length);
+			this.originalPriority = this.audioSource.priority;
+			this.originalVolume = this.audioSource.volume;
+			if (this.audioSource.playOnAwake)
+			{
+				this.audioSource.Stop();
+				this.PlayRandom();
+			}
+		}
+		catch (Exception e)
+		{
+			ModManager.HandleModException(e);
+		}
+	}
+
+	// Token: 0x06000578 RID: 1400 RVA: 0x00023418 File Offset: 0x00021618
+	public void PlayRandom()
+	{
+		this.lastIndex = (this.lastIndex + Random.Range(1, this.clips.Length)) % this.clips.Length;
+		this.PlaySoundBank(this.lastIndex);
+	}
+
+	// Token: 0x06000579 RID: 1401 RVA: 0x0002344A File Offset: 0x0002164A
+	public void PlaySoundBank(int index)
+	{
+		this.audioSource.PlayOneShot(this.clips[index]);
+	}
+
+	// Token: 0x0600057A RID: 1402 RVA: 0x0002345F File Offset: 0x0002165F
+	[Ignore]
+	public void SetPriority(int priority)
+	{
+		this.audioSource.priority = priority;
+	}
+
+	// Token: 0x0600057B RID: 1403 RVA: 0x0002346D File Offset: 0x0002166D
+	[Ignore]
+	public void ResetPriority()
+	{
+		this.audioSource.priority = this.originalPriority;
+	}
+
+	// Token: 0x0600057C RID: 1404 RVA: 0x00023480 File Offset: 0x00021680
+	public void SetVolume(float volume)
+	{
+		this.audioSource.volume = this.originalVolume * volume;
+	}
+
+	// Token: 0x0600057D RID: 1405 RVA: 0x00023498 File Offset: 0x00021698
+	[Ignore]
+	public void MoveVolume(float targetVolume, float speed)
+	{
+		float target = this.originalVolume * targetVolume;
+		this.audioSource.volume = Mathf.MoveTowards(this.audioSource.volume, target, speed * Time.deltaTime);
+	}
+
+	// Token: 0x0600057E RID: 1406 RVA: 0x000234D1 File Offset: 0x000216D1
+	public bool IsPlaying()
+	{
+		return this.audioSource.isPlaying;
+	}
+
+	// Token: 0x040004F4 RID: 1268
+	public AudioClip[] clips;
+
+	// Token: 0x040004F5 RID: 1269
+	public AudioSource audioSource;
+
+	// Token: 0x040004F6 RID: 1270
+	private int lastIndex;
+
+	// Token: 0x040004F7 RID: 1271
+	private int originalPriority;
+
+	// Token: 0x040004F8 RID: 1272
+	private float originalVolume = 1f;
+}

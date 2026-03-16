@@ -1,0 +1,107 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+// Token: 0x02000211 RID: 529
+public class ScoreboardUi : MonoBehaviour
+{
+	// Token: 0x060013D4 RID: 5076 RVA: 0x0006D9D0 File Offset: 0x0006BBD0
+	public static void AddEntryForActor(Actor actor)
+	{
+		ScoreboardActorEntry component = Object.Instantiate<GameObject>(ScoreboardUi.instance.scoreboardEntryPrefab, (actor.team == 1) ? ScoreboardUi.instance.team1Panel : ScoreboardUi.instance.team0Panel).GetComponent<ScoreboardActorEntry>();
+		component.SetActor(actor);
+		if (!actor.aiControlled)
+		{
+			component.EnableHighlight();
+		}
+		actor.scoreboardEntry = component;
+		ScoreboardUi.instance.entriesOfTeam[actor.team].Add(component);
+	}
+
+	// Token: 0x060013D5 RID: 5077 RVA: 0x0006DA48 File Offset: 0x0006BC48
+	public static void Sort(ScoreboardActorEntry entry)
+	{
+		ScoreboardUi.instance.entriesOfTeam[entry.actor.team].Sort((ScoreboardActorEntry x, ScoreboardActorEntry y) => y.sortScore.CompareTo(x.sortScore));
+		entry.transform.SetSiblingIndex(ScoreboardUi.instance.entriesOfTeam[entry.actor.team].IndexOf(entry));
+	}
+
+	// Token: 0x060013D6 RID: 5078 RVA: 0x0006DABE File Offset: 0x0006BCBE
+	public static bool IsOpenAndFocused()
+	{
+		return ScoreboardUi.instance.canvas.enabled && ScoreboardUi.instance.isFocused;
+	}
+
+	// Token: 0x060013D7 RID: 5079 RVA: 0x0006DAE0 File Offset: 0x0006BCE0
+	private void Awake()
+	{
+		ScoreboardUi.instance = this;
+		this.canvas = base.GetComponent<Canvas>();
+		this.entriesOfTeam = new Dictionary<int, List<ScoreboardActorEntry>>();
+		this.entriesOfTeam.Add(0, new List<ScoreboardActorEntry>());
+		this.entriesOfTeam.Add(1, new List<ScoreboardActorEntry>());
+		ScoreboardUi.SetupTeamPanel(this.team0NameContainer, this.team0NameLabel, GameManager.instance.gameInfo.team[0]);
+		ScoreboardUi.SetupTeamPanel(this.team1NameContainer, this.team1NameLabel, GameManager.instance.gameInfo.team[1]);
+	}
+
+	// Token: 0x060013D8 RID: 5080 RVA: 0x0006DB70 File Offset: 0x0006BD70
+	private static void SetupTeamPanel(Image container, Text labelText, TeamInfo info)
+	{
+		Color teamColor = info.teamColor;
+		teamColor.a = 0.4f;
+		container.color = teamColor;
+		labelText.text = info.teamName;
+	}
+
+	// Token: 0x060013D9 RID: 5081 RVA: 0x0006DBA3 File Offset: 0x0006BDA3
+	public static bool GetOpenInput(out bool isFocused)
+	{
+		isFocused = SteelInput.GetButton(SteelInput.KeyBinds.Scoreboard);
+		return isFocused || SteelInput.GetButton(SteelInput.KeyBinds.PeekScoreboard);
+	}
+
+	// Token: 0x060013DA RID: 5082 RVA: 0x0006DBBC File Offset: 0x0006BDBC
+	private void Update()
+	{
+		bool flag;
+		bool openInput = ScoreboardUi.GetOpenInput(out flag);
+		this.isFocused = flag;
+		this.canvas.enabled = (openInput && ScoreboardUi.activeScoreboardType == ScoreboardUIType.Scoreboard);
+	}
+
+	// Token: 0x04001319 RID: 4889
+	public static ScoreboardUi instance;
+
+	// Token: 0x0400131A RID: 4890
+	public static ScoreboardUIType activeScoreboardType;
+
+	// Token: 0x0400131B RID: 4891
+	public GameObject scoreboardEntryPrefab;
+
+	// Token: 0x0400131C RID: 4892
+	public Transform team0Panel;
+
+	// Token: 0x0400131D RID: 4893
+	public Transform team1Panel;
+
+	// Token: 0x0400131E RID: 4894
+	public Text team0NameLabel;
+
+	// Token: 0x0400131F RID: 4895
+	public Text team1NameLabel;
+
+	// Token: 0x04001320 RID: 4896
+	public Image team0NameContainer;
+
+	// Token: 0x04001321 RID: 4897
+	public Image team1NameContainer;
+
+	// Token: 0x04001322 RID: 4898
+	private Canvas canvas;
+
+	// Token: 0x04001323 RID: 4899
+	private Dictionary<int, List<ScoreboardActorEntry>> entriesOfTeam;
+
+	// Token: 0x04001324 RID: 4900
+	private bool isFocused;
+}

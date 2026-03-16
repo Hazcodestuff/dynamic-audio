@@ -1,0 +1,120 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Token: 0x020000DB RID: 219
+public class SpecialEffect : MonoBehaviour
+{
+	// Token: 0x060008FC RID: 2300 RVA: 0x00034A84 File Offset: 0x00032C84
+	private void Start()
+	{
+		float num = 0f;
+		foreach (SpecialEffect.MaterialColorTween materialColorTween in this.colorTweens)
+		{
+			materialColorTween.Start();
+			num = Mathf.Max(num, materialColorTween.duration);
+		}
+		this.tweenAction = new TimedAction(num, false);
+	}
+
+	// Token: 0x060008FD RID: 2301 RVA: 0x00034AF8 File Offset: 0x00032CF8
+	private void Update()
+	{
+		bool flag = !this.tweenAction.TrueDone();
+		if (flag)
+		{
+			using (List<SpecialEffect.MaterialColorTween>.Enumerator enumerator = this.colorTweens.GetEnumerator())
+			{
+				while (enumerator.MoveNext())
+				{
+					SpecialEffect.MaterialColorTween materialColorTween = enumerator.Current;
+					materialColorTween.Update(this.tweenAction.Elapsed());
+				}
+				goto IL_8B;
+			}
+		}
+		if (this.tweenActionRunningLastFrame)
+		{
+			foreach (SpecialEffect.MaterialColorTween materialColorTween2 in this.colorTweens)
+			{
+				materialColorTween2.AssignFinalColor();
+			}
+		}
+		IL_8B:
+		this.tweenActionRunningLastFrame = flag;
+	}
+
+	// Token: 0x060008FE RID: 2302 RVA: 0x00034BB4 File Offset: 0x00032DB4
+	private void PlaySpecialEffect()
+	{
+		this.particles.Play();
+		this.tweenAction.Start();
+	}
+
+	// Token: 0x04000870 RID: 2160
+	public ParticleSystem particles;
+
+	// Token: 0x04000871 RID: 2161
+	public List<SpecialEffect.MaterialColorTween> colorTweens = new List<SpecialEffect.MaterialColorTween>();
+
+	// Token: 0x04000872 RID: 2162
+	private TimedAction tweenAction = new TimedAction(0f, false);
+
+	// Token: 0x04000873 RID: 2163
+	private bool tweenActionRunningLastFrame;
+
+	// Token: 0x020007D8 RID: 2008
+	[Serializable]
+	public class MaterialColorTween
+	{
+		// Token: 0x06004F9C RID: 20380 RVA: 0x00132D27 File Offset: 0x00130F27
+		public void Start()
+		{
+			this.material = this.renderer.materials[this.targetMaterialIndex];
+			this.sourceColor = this.material.GetColor(this.colorName);
+		}
+
+		// Token: 0x06004F9D RID: 20381 RVA: 0x00132D58 File Offset: 0x00130F58
+		public void Update(float time)
+		{
+			float t = this.lerpCurve.Evaluate(time / this.duration);
+			this.AssignColor(Color.Lerp(this.targetColor, this.sourceColor, t));
+		}
+
+		// Token: 0x06004F9E RID: 20382 RVA: 0x00132D91 File Offset: 0x00130F91
+		public void AssignFinalColor()
+		{
+			this.AssignColor(this.targetColor);
+		}
+
+		// Token: 0x06004F9F RID: 20383 RVA: 0x00132D9F File Offset: 0x00130F9F
+		private void AssignColor(Color c)
+		{
+			this.material.SetColor(this.colorName, c);
+		}
+
+		// Token: 0x040029EE RID: 10734
+		public Renderer renderer;
+
+		// Token: 0x040029EF RID: 10735
+		public int targetMaterialIndex;
+
+		// Token: 0x040029F0 RID: 10736
+		public string colorName;
+
+		// Token: 0x040029F1 RID: 10737
+		public Color targetColor;
+
+		// Token: 0x040029F2 RID: 10738
+		public AnimationCurve lerpCurve;
+
+		// Token: 0x040029F3 RID: 10739
+		public float duration;
+
+		// Token: 0x040029F4 RID: 10740
+		private Color sourceColor;
+
+		// Token: 0x040029F5 RID: 10741
+		private Material material;
+	}
+}

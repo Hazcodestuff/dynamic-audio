@@ -1,0 +1,64 @@
+using System;
+using System.Linq;
+using UnityEngine;
+
+// Token: 0x020001E4 RID: 484
+public class DetectionUi : MonoBehaviour
+{
+	// Token: 0x0600124E RID: 4686 RVA: 0x00066464 File Offset: 0x00064664
+	private void Awake()
+	{
+		DetectionUi.instance = this;
+		this.blips = new DetectionBlip[5];
+		this.indicators = new DetectionIndicator[5];
+		for (int i = 0; i < 5; i++)
+		{
+			DetectionBlip component = Object.Instantiate<GameObject>(this.blipPrefab, base.transform).GetComponent<DetectionBlip>();
+			this.blips[i] = component;
+			DetectionIndicator component2 = Object.Instantiate<GameObject>(this.indicatorPrefab, this.indicatorPanel).GetComponent<DetectionIndicator>();
+			this.indicators[i] = component2;
+		}
+	}
+
+	// Token: 0x0600124F RID: 4687 RVA: 0x000664DC File Offset: 0x000646DC
+	public static void StartDetection(AiActorController ai)
+	{
+		if (DetectionUi.instance.IsTrackingDetectionOf(ai))
+		{
+			return;
+		}
+		DetectionUi.instance.blips[DetectionUi.instance.nextIndex].Activate(ai.actor);
+		DetectionUi.instance.indicators[DetectionUi.instance.nextIndex].Activate(ai);
+		DetectionUi.instance.nextIndex = (DetectionUi.instance.nextIndex + 1) % 5;
+	}
+
+	// Token: 0x06001250 RID: 4688 RVA: 0x0006654C File Offset: 0x0006474C
+	public bool IsTrackingDetectionOf(AiActorController ai)
+	{
+		return this.indicators.Any((DetectionIndicator i) => i.target == ai);
+	}
+
+	// Token: 0x0400113C RID: 4412
+	private const int POOL_SIZE = 5;
+
+	// Token: 0x0400113D RID: 4413
+	public static DetectionUi instance;
+
+	// Token: 0x0400113E RID: 4414
+	public GameObject blipPrefab;
+
+	// Token: 0x0400113F RID: 4415
+	public GameObject indicatorPrefab;
+
+	// Token: 0x04001140 RID: 4416
+	public Transform indicatorPanel;
+
+	// Token: 0x04001141 RID: 4417
+	private DetectionBlip[] blips;
+
+	// Token: 0x04001142 RID: 4418
+	private DetectionIndicator[] indicators;
+
+	// Token: 0x04001143 RID: 4419
+	private int nextIndex;
+}

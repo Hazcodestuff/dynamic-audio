@@ -1,0 +1,148 @@
+using System;
+using Lua;
+using UnityEngine;
+using UnityEngine.UI;
+
+// Token: 0x020001E6 RID: 486
+[OnlyStatic]
+public class EffectUi : MonoBehaviour
+{
+	// Token: 0x06001255 RID: 4693 RVA: 0x000665E8 File Offset: 0x000647E8
+	private void Awake()
+	{
+		EffectUi.instance = this;
+	}
+
+	// Token: 0x06001256 RID: 4694 RVA: 0x000665F0 File Offset: 0x000647F0
+	private void LateUpdate()
+	{
+		this.UpdateFade();
+	}
+
+	// Token: 0x06001257 RID: 4695 RVA: 0x000665F8 File Offset: 0x000647F8
+	private void UpdateFade()
+	{
+		object obj = !this.fadeAction.TrueDone() || this.fadeOut;
+		float num = 0f;
+		if (!this.fadeAction.TrueDone())
+		{
+			num = this.fadeAction.Ratio();
+			if (this.fadeOut)
+			{
+				num = 1f - num;
+			}
+		}
+		object obj2 = obj;
+		if (obj2 != null && (this.fadeType == EffectUi.FadeType.FullScreen || this.fadeType == EffectUi.FadeType.EyeAndFullScreen))
+		{
+			this.fadeImage.enabled = true;
+		}
+		else
+		{
+			this.fadeImage.enabled = false;
+		}
+		if (obj2 != null && (this.fadeType == EffectUi.FadeType.Eye || this.fadeType == EffectUi.FadeType.EyeAndFullScreen))
+		{
+			this.eyeLidParent.gameObject.SetActive(true);
+			this.eyeLidParent.localScale = new Vector3(1f, 0.1f + 0.9f * num, 1f);
+			float y = 1f - num;
+			float y2 = num;
+			this.eyeLidTop.anchorMin = new Vector2(0f, y2);
+			this.eyeLidTop.anchorMax = new Vector2(1f, y2);
+			this.eyeLidBottom.anchorMin = new Vector2(0f, y);
+			this.eyeLidBottom.anchorMax = new Vector2(1f, y);
+			return;
+		}
+		this.eyeLidParent.gameObject.SetActive(false);
+	}
+
+	// Token: 0x06001258 RID: 4696 RVA: 0x00066740 File Offset: 0x00064940
+	public static void FadeOut(EffectUi.FadeType type, float duration, Color color)
+	{
+		EffectUi.ChangeFadeColor(color, 0f);
+		if (EffectUi.instance.fadeType == EffectUi.FadeType.FullScreen || EffectUi.instance.fadeType == EffectUi.FadeType.EyeAndFullScreen)
+		{
+			Color color2 = color;
+			color2.a = 0f;
+			EffectUi.instance.fadeImage.canvasRenderer.SetColor(color2);
+			EffectUi.instance.fadeImage.CrossFadeAlpha(1f, duration, false);
+		}
+		EffectUi.instance.fadeType = type;
+		EffectUi.instance.fadeOut = true;
+		EffectUi.instance.fadeAction.StartLifetime(duration);
+	}
+
+	// Token: 0x06001259 RID: 4697 RVA: 0x000667D0 File Offset: 0x000649D0
+	public static void FadeIn(EffectUi.FadeType type, float duration, Color color)
+	{
+		EffectUi.ChangeFadeColor(color, 0f);
+		if (EffectUi.instance.fadeType == EffectUi.FadeType.FullScreen || EffectUi.instance.fadeType == EffectUi.FadeType.EyeAndFullScreen)
+		{
+			EffectUi.instance.fadeImage.canvasRenderer.SetColor(color);
+			EffectUi.instance.fadeImage.CrossFadeAlpha(0f, duration, false);
+		}
+		EffectUi.instance.fadeType = type;
+		EffectUi.instance.fadeOut = false;
+		EffectUi.instance.fadeAction.StartLifetime(duration);
+	}
+
+	// Token: 0x0600125A RID: 4698 RVA: 0x00066854 File Offset: 0x00064A54
+	public static void ChangeFadeColor(Color color, float changeTime)
+	{
+		Graphic[] array = EffectUi.instance.fadeGraphics;
+		for (int i = 0; i < array.Length; i++)
+		{
+			array[i].CrossFadeColor(color, changeTime, false, false);
+		}
+	}
+
+	// Token: 0x0600125B RID: 4699 RVA: 0x00066886 File Offset: 0x00064A86
+	public static void Clear()
+	{
+		EffectUi.FadeIn(EffectUi.FadeType.FullScreen, 0f, Color.black);
+	}
+
+	// Token: 0x04001146 RID: 4422
+	[Ignore]
+	public static EffectUi instance;
+
+	// Token: 0x04001147 RID: 4423
+	[Ignore]
+	public Graphic[] fadeGraphics;
+
+	// Token: 0x04001148 RID: 4424
+	[Ignore]
+	public RawImage fadeImage;
+
+	// Token: 0x04001149 RID: 4425
+	[Ignore]
+	public RectTransform eyeLidParent;
+
+	// Token: 0x0400114A RID: 4426
+	[Ignore]
+	public RectTransform eyeLidTop;
+
+	// Token: 0x0400114B RID: 4427
+	[Ignore]
+	public RectTransform eyeLidBottom;
+
+	// Token: 0x0400114C RID: 4428
+	private EffectUi.FadeType fadeType;
+
+	// Token: 0x0400114D RID: 4429
+	private TimedAction fadeAction = new TimedAction(1f, false);
+
+	// Token: 0x0400114E RID: 4430
+	private bool fadeOut;
+
+	// Token: 0x020008A6 RID: 2214
+	public enum FadeType
+	{
+		// Token: 0x04002D26 RID: 11558
+		FullScreen,
+		// Token: 0x04002D27 RID: 11559
+		Eye,
+		// Token: 0x04002D28 RID: 11560
+		EyeAndFullScreen
+	}
+}

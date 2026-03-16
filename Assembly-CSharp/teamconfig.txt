@@ -1,0 +1,336 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using TMPro;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.EventSystems;
+
+// Token: 0x02000162 RID: 354
+public class TeamConfig : MonoBehaviour
+{
+	// Token: 0x06000DE9 RID: 3561 RVA: 0x00050994 File Offset: 0x0004EB94
+	private void OnEnable()
+	{
+		TeamConfig.instance = this;
+		this.teamNameIF.text = GameManager.instance.gameInfo.team[this.thisTeamIndex].teamName;
+		this.CheckTeamColor(GameManager.instance.gameInfo.team[this.thisTeamIndex]);
+		this.isConnectedToGameConfig.SetActive(GameManager.instance.gameInfo.team[this.thisTeamIndex].isConnectedToGameConfig);
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DEA RID: 3562 RVA: 0x00050A18 File Offset: 0x0004EC18
+	public void SetupTeamConfigPaths()
+	{
+		string folderPath = SaveConfigurationPage.GetFolderPath();
+		List<string> list = new List<string>
+		{
+			"DEFAULT " + ((this.thisTeamIndex == 0) ? "EAGLE" : "RAVEN")
+		};
+		this.teamConfigurationPaths = new List<InstantActionConfigMenu.ConfigurationFileInfo>();
+		foreach (InstantActionConfigMenu.ConfigurationFileInfo configurationFileInfo in InstantActionConfigMenu.GetConfigFiles(folderPath, true, true))
+		{
+			try
+			{
+				if (configurationFileInfo.path.EndsWith(".rtc"))
+				{
+					this.teamConfigurationPaths.Add(configurationFileInfo);
+					string[] array = configurationFileInfo.path.Replace('\\', '/').Split(new char[]
+					{
+						'/'
+					});
+					string text = array[array.Length - 1];
+					text = text.Remove(text.Length - 4);
+					list.Add(text);
+				}
+			}
+			catch (Exception exception)
+			{
+				Debug.LogError("Could not load team configuration file " + configurationFileInfo.ToString() + ", exception follows:");
+				Debug.LogException(exception);
+			}
+		}
+		this.loadedTeamConfigsDD.AddOptions(list, new UnityAction<int, PointerEventData>(this.OnLoadTeam));
+		this.loadedTeamConfigsDD.SetLabelText(0, null);
+	}
+
+	// Token: 0x06000DEB RID: 3563 RVA: 0x00050B5C File Offset: 0x0004ED5C
+	public void OnLoadTeam(int value, PointerEventData eventData)
+	{
+		if (eventData == null)
+		{
+			return;
+		}
+		if (eventData.button == PointerEventData.InputButton.Left)
+		{
+			this.LoadTeam(value);
+			BlockAndCheckClicks.StopListener(new UnityAction(this.HideDropdowns));
+			this.loadPartOfTeamConfigDD.gameObject.SetActive(false);
+			return;
+		}
+		if (eventData.button == PointerEventData.InputButton.Right)
+		{
+			if (value == this.loadedTeamConfigsDD.options.Count<string>() - 1 && this.loadedTeamConfigsDD.GetLabelText() == ((this.thisTeamIndex == 0) ? "EAGLE" : "RAVEN") + " (MODIFIED)")
+			{
+				this.loadedTeamConfigsDD.Hide();
+				return;
+			}
+			this.selectingFromConfig = value;
+			BlockAndCheckClicks.StartListener(new UnityAction(this.HideDropdowns));
+			this.loadPartOfTeamConfigDD.gameObject.SetActive(true);
+			Vector2 vector;
+			RectTransformUtility.ScreenPointToLocalPointInRectangle((RectTransform)this.loadPartOfTeamConfigDD.parent, Input.mousePosition, null, out vector);
+			this.loadPartOfTeamConfigDD.anchoredPosition = new Vector2(this.loadPartOfTeamConfigDD.anchoredPosition.x, vector.y);
+		}
+	}
+
+	// Token: 0x06000DEC RID: 3564 RVA: 0x00050C6E File Offset: 0x0004EE6E
+	private void HideDropdowns()
+	{
+		this.loadedTeamConfigsDD.Hide();
+		this.loadPartOfTeamConfigDD.gameObject.SetActive(false);
+		BlockAndCheckClicks.StopListener(new UnityAction(this.HideDropdowns));
+	}
+
+	// Token: 0x06000DED RID: 3565 RVA: 0x00050CA0 File Offset: 0x0004EEA0
+	public void LoadSkinOnly()
+	{
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+		if (this.selectingFromConfig == 0)
+		{
+			GameManager.instance.gameInfo.team[this.thisTeamIndex].skin = null;
+			GamePreview.UpdatePreview();
+			this.CheckIfDefaultDirty();
+			return;
+		}
+		int index = this.selectingFromConfig - 1;
+		TeamInfo teamInfo = JsonUtility.FromJson<SerializedTeamInfo>(File.ReadAllText(this.teamConfigurationPaths[index].path)).Deserialize(-1, false);
+		GameManager.instance.gameInfo.team[this.thisTeamIndex].skin = teamInfo.skin;
+		GamePreview.UpdatePreview();
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DEE RID: 3566 RVA: 0x00050D44 File Offset: 0x0004EF44
+	public void LoadWeaponsOnly()
+	{
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+		if (this.selectingFromConfig == 0)
+		{
+			GameManager.instance.gameInfo.team[this.thisTeamIndex].ClearWeaponEntries();
+			GameManager.instance.gameInfo.team[this.thisTeamIndex].AddDefaultWeapons();
+			GamePreview.UpdatePreview();
+			this.CheckIfDefaultDirty();
+			return;
+		}
+		int index = this.selectingFromConfig - 1;
+		TeamInfo teamInfo = JsonUtility.FromJson<SerializedTeamInfo>(File.ReadAllText(this.teamConfigurationPaths[index].path)).Deserialize(-1, false);
+		GameManager.instance.gameInfo.team[this.thisTeamIndex].ClearWeaponEntries();
+		foreach (WeaponManager.TieredWeaponEntry tieredWeaponEntry in teamInfo.availableWeapons.AllAsTieredWeaponEntries())
+		{
+			TeamConfigPanel.instance.AddWeaponToTeam(this.thisTeamIndex, tieredWeaponEntry.entry, tieredWeaponEntry.tier);
+		}
+		GamePreview.UpdatePreview();
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DEF RID: 3567 RVA: 0x00050E54 File Offset: 0x0004F054
+	public void LoadVehiclesOnly()
+	{
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+		if (this.selectingFromConfig == 0)
+		{
+			GameManager.instance.gameInfo.team[this.thisTeamIndex].AddOfficialVehicles();
+			GamePreview.UpdatePreview();
+			this.CheckIfDefaultDirty();
+			return;
+		}
+		int index = this.selectingFromConfig - 1;
+		TeamInfo teamInfo = JsonUtility.FromJson<SerializedTeamInfo>(File.ReadAllText(this.teamConfigurationPaths[index].path)).Deserialize(-1, false);
+		TeamInfo teamInfo2 = GameManager.instance.gameInfo.team[this.thisTeamIndex];
+		teamInfo2.ClearVehicles();
+		teamInfo2.ClearTurrets();
+		foreach (VehicleSpawner.VehicleSpawnType vehicleSpawnType in (VehicleSpawner.VehicleSpawnType[])Enum.GetValues(typeof(VehicleSpawner.VehicleSpawnType)))
+		{
+			foreach (RarityTier tier in RarityTierUtils.AllTiers())
+			{
+				foreach (VehicleInfo vehicle in teamInfo.vehicleSlot[vehicleSpawnType].GetVehiclesInTier(tier))
+				{
+					GameManager.instance.gameInfo.team[this.thisTeamIndex].AddVehicle(vehicleSpawnType, tier, vehicle);
+				}
+			}
+		}
+		foreach (TurretSpawner.TurretSpawnType turretSpawnType in (TurretSpawner.TurretSpawnType[])Enum.GetValues(typeof(TurretSpawner.TurretSpawnType)))
+		{
+			foreach (RarityTier tier2 in RarityTierUtils.AllTiers())
+			{
+				foreach (VehicleInfo vehicle2 in teamInfo.turretSlot[turretSpawnType].GetVehiclesInTier(tier2))
+				{
+					GameManager.instance.gameInfo.team[this.thisTeamIndex].AddTurret(turretSpawnType, tier2, vehicle2);
+				}
+			}
+		}
+		GamePreview.UpdatePreview();
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DF0 RID: 3568 RVA: 0x000510A4 File Offset: 0x0004F2A4
+	public void LoadTeam(int value)
+	{
+		if (value == this.loadedTeamConfigsDD.options.Count<string>() - 1 && this.loadedTeamConfigsDD.GetLabelText() == ((this.thisTeamIndex == 0) ? "EAGLE" : "RAVEN") + " (MODIFIED)")
+		{
+			return;
+		}
+		TeamConfigPanel.loadedConfigs[this.thisTeamIndex] = ((value == 0) ? "" : this.loadedTeamConfigsDD.options[value]);
+		if (this.loadedTeamConfigsDD.options.Last<string>() == ((this.thisTeamIndex == 0) ? "EAGLE" : "RAVEN") + " (MODIFIED)")
+		{
+			this.loadedTeamConfigsDD.RemoveOption(this.loadedTeamConfigsDD.options.Last<string>());
+		}
+		InstantActionConfigMenu.LoadedTeamConfig(this.thisTeamIndex);
+		if (value == 0)
+		{
+			GameManager.instance.gameInfo.team[this.thisTeamIndex].LoadDefault(this.thisTeamIndex);
+			this.teamColorDD.SelectOption(this.thisTeamIndex, false);
+			this.teamNameIF.SetTextWithoutNotify(GameManager.instance.gameInfo.team[this.thisTeamIndex].teamName);
+			this.isConnectedToGameConfig.SetActive(false);
+			GamePreview.UpdatePreview();
+			return;
+		}
+		int index = value - 1;
+		TeamInfo teamInfo = JsonUtility.FromJson<SerializedTeamInfo>(File.ReadAllText(this.teamConfigurationPaths[index].path)).Deserialize(-1, false);
+		GameManager.instance.gameInfo.team[this.thisTeamIndex] = teamInfo;
+		GameManager.instance.SetTeamColor(this.thisTeamIndex, teamInfo.teamColor);
+		GameManager.instance.SetTeamName(this.thisTeamIndex, teamInfo.teamName);
+		this.teamNameIF.text = teamInfo.teamName;
+		this.CheckTeamColor(teamInfo);
+		this.isConnectedToGameConfig.SetActive(teamInfo.isConnectedToGameConfig);
+		GamePreview.UpdatePreview();
+	}
+
+	// Token: 0x06000DF1 RID: 3569 RVA: 0x00051280 File Offset: 0x0004F480
+	private void CheckTeamColor(TeamInfo teamInfo)
+	{
+		Color teamColor = teamInfo.teamColor;
+		if (TeamConfig.builtInColors.Contains(teamInfo.teamColor))
+		{
+			this.teamColorDD.SelectOption(TeamConfig.builtInColors.IndexOf(teamInfo.teamColor), false);
+			return;
+		}
+		this.teamColorDD.SelectOption(TeamConfig.builtInColors.Count - 1, false);
+	}
+
+	// Token: 0x06000DF2 RID: 3570 RVA: 0x000512DC File Offset: 0x0004F4DC
+	public void OnChangedTeamColor(int value)
+	{
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+		if (value == TeamConfig.builtInColors.Count - 1)
+		{
+			this.colorPicker.SetActive(true);
+			this.CheckIfDefaultDirty();
+			return;
+		}
+		GameManager.instance.SetTeamColor(this.thisTeamIndex, TeamConfig.builtInColors[value]);
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DF3 RID: 3571 RVA: 0x00051338 File Offset: 0x0004F538
+	public void SetCustomTeamColor(Color color)
+	{
+		GameManager.instance.SetTeamColor(this.thisTeamIndex, color);
+		this.CheckIfDefaultDirty();
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+	}
+
+	// Token: 0x06000DF4 RID: 3572 RVA: 0x0005135D File Offset: 0x0004F55D
+	public void OnChangedTeamName(string newName)
+	{
+		GameManager.instance.SetTeamName(this.thisTeamIndex, newName);
+		InstantActionConfigMenu.SetTeamDirty(this.thisTeamIndex, true);
+		this.CheckIfDefaultDirty();
+	}
+
+	// Token: 0x06000DF5 RID: 3573 RVA: 0x00051384 File Offset: 0x0004F584
+	private void CheckIfDefaultDirty()
+	{
+		bool flag = InstantActionConfigMenu.isTeamDirty[this.thisTeamIndex];
+		string text = ((this.thisTeamIndex == 0) ? "EAGLE" : "RAVEN") + " (MODIFIED)";
+		if (this.loadedTeamConfigsDD.GetLabelText() == this.loadedTeamConfigsDD.options[0] && flag)
+		{
+			if (this.loadedTeamConfigsDD.options.Last<string>() != text)
+			{
+				this.loadedTeamConfigsDD.AddOption(text, new UnityAction<int, PointerEventData>(this.OnLoadTeam));
+			}
+			this.loadedTeamConfigsDD.SetLabelText(this.loadedTeamConfigsDD.options.Count - 1, null);
+			return;
+		}
+		if (this.loadedTeamConfigsDD.options.Last<string>() == text && !flag)
+		{
+			if (this.loadedTeamConfigsDD.GetLabelText() == this.loadedTeamConfigsDD.options.Last<string>())
+			{
+				InstantActionConfigMenu.SetTeamDirty(TeamConfigPanel.pickingTeam, false);
+				this.loadedTeamConfigsDD.SetLabelText(0, null);
+			}
+			this.loadedTeamConfigsDD.RemoveOption(this.loadedTeamConfigsDD.options.Last<string>());
+		}
+	}
+
+	// Token: 0x06000DF6 RID: 3574 RVA: 0x000514A1 File Offset: 0x0004F6A1
+	private void OnDisable()
+	{
+		this.colorPicker.SetActive(false);
+	}
+
+	// Token: 0x06000DF7 RID: 3575 RVA: 0x000514AF File Offset: 0x0004F6AF
+	public void OpenTeamSavePage()
+	{
+		SaveConfigurationPage.saveTeam = true;
+		MainMenu.instance.OpenPageIndex(8);
+	}
+
+	// Token: 0x04000CC9 RID: 3273
+	public static TeamConfig instance;
+
+	// Token: 0x04000CCA RID: 3274
+	[NonSerialized]
+	public List<InstantActionConfigMenu.ConfigurationFileInfo> teamConfigurationPaths;
+
+	// Token: 0x04000CCB RID: 3275
+	[SerializeField]
+	private int thisTeamIndex;
+
+	// Token: 0x04000CCC RID: 3276
+	public PointerEventDropdown loadedTeamConfigsDD;
+
+	// Token: 0x04000CCD RID: 3277
+	public RectTransform loadPartOfTeamConfigDD;
+
+	// Token: 0x04000CCE RID: 3278
+	public TMP_InputField teamNameIF;
+
+	// Token: 0x04000CCF RID: 3279
+	[SerializeField]
+	private ButtonFakeDropdown teamColorDD;
+
+	// Token: 0x04000CD0 RID: 3280
+	[SerializeField]
+	private GameObject colorPicker;
+
+	// Token: 0x04000CD1 RID: 3281
+	[SerializeField]
+	private GameObject isConnectedToGameConfig;
+
+	// Token: 0x04000CD2 RID: 3282
+	private int selectingFromConfig;
+
+	// Token: 0x04000CD3 RID: 3283
+	public static List<Color> builtInColors = new List<Color>
+	{
+		Color.blue,
+		Color.red,
+		new Color(0.9f, 0.75f, 0f),
+		new Color(0.1f, 0.5f, 0.12f),
+		new Color(0.5f, 0.23f, 0.16f),
+		new Color(0.45f, 0.45f, 0.45f),
+		Color.black
+	};
+}

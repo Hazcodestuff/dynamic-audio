@@ -1,0 +1,694 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Token: 0x020000F6 RID: 246
+public abstract class GameModeBase : MonoBehaviour
+{
+	// Token: 0x06000979 RID: 2425 RVA: 0x000371C5 File Offset: 0x000353C5
+	public virtual bool SpawnVehicles()
+	{
+		return true;
+	}
+
+	// Token: 0x0600097A RID: 2426 RVA: 0x000371C8 File Offset: 0x000353C8
+	public virtual bool SpawnTurrets()
+	{
+		return true;
+	}
+
+	// Token: 0x0600097B RID: 2427 RVA: 0x000371CC File Offset: 0x000353CC
+	public static void OnOpenLoadoutPressed()
+	{
+		if (GameModeBase.activeGameMode == null)
+		{
+			return;
+		}
+		FpsActorController controller = LocalPlayer.controller;
+		Actor playerActor = (controller != null) ? controller.actor : null;
+		if (GameModeBase.activeGameMode.loadoutType == GameModeBase.LoadoutUIType.Default)
+		{
+			GameModeBase.activeGameMode.ToggleLoadoutUI(playerActor);
+		}
+	}
+
+	// Token: 0x0600097C RID: 2428 RVA: 0x00037210 File Offset: 0x00035410
+	private void ToggleLoadoutUI(Actor playerActor)
+	{
+		if (LoadoutUi.IsOpen())
+		{
+			this.CloseLoadout(playerActor);
+			return;
+		}
+		this.OpenLoadout(playerActor);
+	}
+
+	// Token: 0x0600097D RID: 2429 RVA: 0x00037228 File Offset: 0x00035428
+	public void OpenLoadout(Actor playerActor)
+	{
+		if (GameManager.gameOver)
+		{
+			return;
+		}
+		LoadoutUi.Show(!playerActor.dead);
+	}
+
+	// Token: 0x0600097E RID: 2430 RVA: 0x00037240 File Offset: 0x00035440
+	public void CloseLoadout(Actor playerActor)
+	{
+		LoadoutUi.Hide(false);
+		((FpsActorController)playerActor.controller).hasAcceptedLoadoutAfterDeath = true;
+	}
+
+	// Token: 0x0600097F RID: 2431 RVA: 0x0003725C File Offset: 0x0003545C
+	public virtual void OnSurrender()
+	{
+		int num = GameManager.PlayerTeam();
+		this.Win(1 - num);
+	}
+
+	// Token: 0x06000980 RID: 2432 RVA: 0x00037278 File Offset: 0x00035478
+	public void RegisterActiveGameMode()
+	{
+		GameModeBase.activeGameMode = this;
+	}
+
+	// Token: 0x06000981 RID: 2433 RVA: 0x00037280 File Offset: 0x00035480
+	public virtual void ActivateGameMode()
+	{
+		this.startTime = Time.time;
+		this.canvas = base.GetComponentInChildren<Canvas>();
+		GameManager.showDefaultControlHints = true;
+		ScoreboardUi.activeScoreboardType = this.scoreboardType;
+	}
+
+	// Token: 0x06000982 RID: 2434 RVA: 0x000372AC File Offset: 0x000354AC
+	public virtual void StartGame()
+	{
+		this.SetupDefaultLevelLayout();
+		if (this.canConfigureFlags && GameManager.GameParameters().configFlags)
+		{
+			this.spawnLayout = GameModeBase.SpawnLayout.UserDefined;
+			return;
+		}
+		if (!GameManager.IsSpectating() && this.autoOpenLoadoutOnStart)
+		{
+			this.OpenLoadoutWhileDeadAfterDelay(1f);
+		}
+	}
+
+	// Token: 0x06000983 RID: 2435 RVA: 0x000372F8 File Offset: 0x000354F8
+	public void SetupDefaultLevelLayout()
+	{
+		this.ApplyLevelLayout(this.FindLevelLayout());
+		this.SetupOwnersDefault();
+	}
+
+	// Token: 0x06000984 RID: 2436 RVA: 0x0003730C File Offset: 0x0003550C
+	private void ApplyLevelLayout(GameModeLevelLayout layout)
+	{
+		try
+		{
+			if (layout != null)
+			{
+				this.spawnLayout = GameModeBase.SpawnLayout.GameModeOverride;
+				SpawnPoint[] array;
+				if (!layout.useDefaultOwners)
+				{
+					array = ActorManager.instance.spawnPoints;
+					for (int i = 0; i < array.Length; i++)
+					{
+						array[i].defaultOwner = SpawnPoint.Team.Neutral;
+					}
+				}
+				array = layout.blueSpawns;
+				for (int i = 0; i < array.Length; i++)
+				{
+					array[i].defaultOwner = SpawnPoint.Team.Blue;
+				}
+				array = layout.redSpawns;
+				for (int i = 0; i < array.Length; i++)
+				{
+					array[i].defaultOwner = SpawnPoint.Team.Red;
+				}
+				array = layout.ghostSpawns;
+				for (int i = 0; i < array.Length; i++)
+				{
+					array[i].SetGhost(true);
+				}
+				array = layout.deactivatedSpawns;
+				for (int i = 0; i < array.Length; i++)
+				{
+					array[i].gameObject.SetActive(false);
+				}
+			}
+		}
+		catch (Exception exception)
+		{
+			Debug.LogException(exception);
+		}
+	}
+
+	// Token: 0x06000985 RID: 2437 RVA: 0x000373EC File Offset: 0x000355EC
+	protected void OpenLoadoutWhileDeadAfterDelay(float delay)
+	{
+		base.Invoke("OpenLoadoutWhileDead", delay);
+	}
+
+	// Token: 0x06000986 RID: 2438 RVA: 0x000373FA File Offset: 0x000355FA
+	protected void OpenLoadoutWhileDead()
+	{
+		if (LocalPlayer.actor.dead)
+		{
+			LoadoutUi.Show(false);
+		}
+	}
+
+	// Token: 0x06000987 RID: 2439 RVA: 0x0003740E File Offset: 0x0003560E
+	public virtual void SetupOrders()
+	{
+		OrderManager.SetupDefaultOrders(true, true, true, true);
+	}
+
+	// Token: 0x06000988 RID: 2440 RVA: 0x0003741C File Offset: 0x0003561C
+	public GameModeLevelLayout FindLevelLayout()
+	{
+		GameModeLevelLayout[] array = Object.FindObjectsOfType<GameModeLevelLayout>();
+		GameModeLevelLayout result = null;
+		foreach (GameModeLevelLayout gameModeLevelLayout in array)
+		{
+			if (gameModeLevelLayout.isBenchmark)
+			{
+				if (Benchmark.isRunning)
+				{
+					return gameModeLevelLayout;
+				}
+			}
+			else if (gameModeLevelLayout.MatchesGameMode(GameManager.GameParameters().gameMode))
+			{
+				result = gameModeLevelLayout;
+			}
+		}
+		return result;
+	}
+
+	// Token: 0x06000989 RID: 2441 RVA: 0x0003746C File Offset: 0x0003566C
+	protected void SetupOwnersDefault()
+	{
+		if (this.canConfigureFlags && GameManager.GameParameters().configFlags)
+		{
+			GameManager.ShowConfigFlagsScreen();
+			return;
+		}
+		foreach (SpawnPoint spawnPoint in ActorManager.instance.spawnPoints)
+		{
+			int num = (int)spawnPoint.defaultOwner;
+			if (GameManager.GameParameters().configFlags && num == -1)
+			{
+				num = 1;
+			}
+			spawnPoint.SetOwner(num, true);
+		}
+	}
+
+	// Token: 0x0600098A RID: 2442 RVA: 0x000374CF File Offset: 0x000356CF
+	public virtual void ActorDied(Actor actor, Vector3 position, bool wasSilentKill)
+	{
+	}
+
+	// Token: 0x0600098B RID: 2443 RVA: 0x000374D4 File Offset: 0x000356D4
+	public virtual void CapturePointChangedOwner(CapturePoint capturePoint, int oldOwner, bool initialOwner)
+	{
+		if (initialOwner)
+		{
+			return;
+		}
+		int owner = capturePoint.owner;
+		if (owner >= 0 && owner <= 1)
+		{
+			IngameUI.ShowOverlayText(GameManager.instance.GetRichTextColorTeamName(owner, ColorVariant.Default) + " CAPTURED " + capturePoint.shortName, 3.5f);
+		}
+	}
+
+	// Token: 0x0600098C RID: 2444 RVA: 0x0003751C File Offset: 0x0003571C
+	public List<Squad> CreateAiSquads(List<Actor> actors, int squadSize, SpawnPoint spawnPoint)
+	{
+		List<Squad> list = new List<Squad>();
+		List<ActorController> list2 = new List<ActorController>();
+		foreach (Actor actor in actors)
+		{
+			if (actor.aiControlled)
+			{
+				list2.Add(actor.controller);
+				if (list2.Count >= squadSize)
+				{
+					Squad squad = new Squad(list2, spawnPoint, null, null, 0f);
+					squad.SetRandomFormation();
+					list.Add(squad);
+					list2 = new List<ActorController>();
+				}
+			}
+		}
+		if (list2.Count > 0)
+		{
+			Squad squad2 = new Squad(list2, spawnPoint, null, null, 0f);
+			squad2.SetRandomFormation();
+			list.Add(squad2);
+		}
+		return list;
+	}
+
+	// Token: 0x0600098D RID: 2445 RVA: 0x000375DC File Offset: 0x000357DC
+	public virtual void PlayerAcceptedLoadoutFirstTime()
+	{
+		this.StartRecurringSpawnWave();
+	}
+
+	// Token: 0x0600098E RID: 2446 RVA: 0x000375E4 File Offset: 0x000357E4
+	public float ElapsedTime()
+	{
+		return Time.time - this.startTime;
+	}
+
+	// Token: 0x0600098F RID: 2447 RVA: 0x000375F4 File Offset: 0x000357F4
+	public virtual int TimeToPlayerRespawn()
+	{
+		float num = LocalPlayer.actor.deathTimestamp + 6f;
+		float num2 = Mathf.Max(GameManager.GameParameters().GetRespawnTime(), 1f);
+		float num3 = Time.time + this.respawnWaveAction.Remaining();
+		int num4 = 0;
+		while (num4 < 10 && num3 <= num)
+		{
+			num3 += num2;
+			num4++;
+		}
+		return Mathf.CeilToInt(num3 - Time.time);
+	}
+
+	// Token: 0x06000990 RID: 2448 RVA: 0x0003765A File Offset: 0x0003585A
+	public virtual bool ShowRemainingTimeToPlayerSpawn()
+	{
+		return !this.respawnWaveAction.TrueDone();
+	}
+
+	// Token: 0x06000991 RID: 2449 RVA: 0x0003766A File Offset: 0x0003586A
+	protected void StartRecurringSpawnWave()
+	{
+		base.StartCoroutine(this.SpawnWaveRoutine());
+	}
+
+	// Token: 0x06000992 RID: 2450 RVA: 0x00037679 File Offset: 0x00035879
+	public void ForceSpawnDeadActors()
+	{
+		this.SpawnDeadActorsOfTeam(0, true);
+		this.SpawnDeadActorsOfTeam(1, true);
+	}
+
+	// Token: 0x06000993 RID: 2451 RVA: 0x0003768B File Offset: 0x0003588B
+	public IEnumerator SpawnWaveRoutine()
+	{
+		float spawnTime = Mathf.Clamp(GameManager.GameParameters().GetRespawnTime(), 1f, 120f);
+		this.respawnWaveAction = new TimedAction(spawnTime, false);
+		for (;;)
+		{
+			yield return new WaitForSeconds(spawnTime);
+			this.OnSpawnWave();
+			this.respawnWaveAction.Start();
+		}
+		yield break;
+	}
+
+	// Token: 0x06000994 RID: 2452 RVA: 0x0003769A File Offset: 0x0003589A
+	public virtual void OnSpawnWave()
+	{
+		this.SpawnDeadActorsOfTeam(0, false);
+		this.SpawnDeadActorsOfTeam(1, false);
+	}
+
+	// Token: 0x06000995 RID: 2453 RVA: 0x000376AC File Offset: 0x000358AC
+	protected void SpawnDeadActorsOfTeam(int team, bool ignoreDeadTime = true)
+	{
+		List<Actor> list = new List<Actor>();
+		foreach (Actor actor in ActorManager.instance.actors)
+		{
+			if (actor.team == team && actor.IsReadyToSpawn() && (ignoreDeadTime || actor.deathTimestamp + 6f < Time.time))
+			{
+				list.Add(actor);
+			}
+		}
+		base.StartCoroutine(this.SpawnActorListDeferred(list, team));
+	}
+
+	// Token: 0x06000996 RID: 2454 RVA: 0x00037740 File Offset: 0x00035940
+	public virtual int ModifyOrderPriority(Order order, int currentPriority)
+	{
+		return currentPriority;
+	}
+
+	// Token: 0x06000997 RID: 2455 RVA: 0x00037743 File Offset: 0x00035943
+	public bool IsDeferredSpawnRunning(int team)
+	{
+		return this.teamDeferredSpawn[team].IsRunning();
+	}
+
+	// Token: 0x06000998 RID: 2456 RVA: 0x00037756 File Offset: 0x00035956
+	public bool IsAnyDeferredSpawnRunning()
+	{
+		return this.IsDeferredSpawnRunning(0) || this.IsDeferredSpawnRunning(1);
+	}
+
+	// Token: 0x06000999 RID: 2457 RVA: 0x0003776A File Offset: 0x0003596A
+	public IEnumerator SpawnActorListDeferred(List<Actor> actorsToSpawn, int team)
+	{
+		if (!ActorManager.TeamHasAnySpawnPoint(team))
+		{
+			yield break;
+		}
+		foreach (Actor actor in actorsToSpawn)
+		{
+			if (!actor.aiControlled)
+			{
+				actorsToSpawn.Remove(actor);
+				SpawnPoint spawnPoint = actor.controller.SelectedSpawnPoint();
+				if (spawnPoint != null)
+				{
+					actor.SpawnAt(spawnPoint.GetSpawnPosition(), Quaternion.identity, null);
+					this.OnSquadSpawned(LocalPlayer.squad);
+					break;
+				}
+				break;
+			}
+		}
+		int num = Mathf.Max(0, this.maxActiveSoldiersAllowed[team] - ActorManager.AliveActorsOnTeam(team).Count);
+		if (num < actorsToSpawn.Count)
+		{
+			actorsToSpawn.RemoveRange(num, actorsToSpawn.Count - num);
+		}
+		if (actorsToSpawn.Count < Mathf.Min(new int[]
+		{
+			2,
+			ActorManager.instance.GetNumberOfBotsInTeam(team),
+			this.maxActiveSoldiersAllowed[team]
+		}))
+		{
+			yield break;
+		}
+		for (int i = 0; i < actorsToSpawn.Count; i++)
+		{
+			actorsToSpawn[i].isScheduledToSpawn = true;
+		}
+		this.teamDeferredSpawn[team].Schedule();
+		if (Time.frameCount % 2 == team)
+		{
+			yield return 0;
+		}
+		while (actorsToSpawn.Count > 0)
+		{
+			Order highestPriorityOrder = OrderManager.GetHighestPriorityOrder(team);
+			if (highestPriorityOrder == null)
+			{
+				break;
+			}
+			SpawnPoint spawnPoint2 = highestPriorityOrder.source;
+			Vehicle vehicle = null;
+			WeaponManager.WeaponEntry.Distance distance;
+			if (highestPriorityOrder.type == Order.OrderType.Roam)
+			{
+				vehicle = highestPriorityOrder.source.GetAvailableRoamingVehicle();
+				distance = ((Random.Range(0f, 1f) < 0.6f) ? WeaponManager.WeaponEntry.Distance.Mid : WeaponManager.WeaponEntry.Distance.Far);
+			}
+			else if (highestPriorityOrder.type == Order.OrderType.Attack)
+			{
+				SpawnPoint spawnPoint3;
+				vehicle = this.GetAvailableVehicleForAttack(team, highestPriorityOrder, out spawnPoint3);
+				if (vehicle != null)
+				{
+					spawnPoint2 = spawnPoint3;
+				}
+				float num2 = Vector3.Distance(highestPriorityOrder.source.transform.position, highestPriorityOrder.target.transform.position) / 2f;
+				if (CoverManager.instance.IsInCqcCell(highestPriorityOrder.target.transform.position))
+				{
+					CapturePoint capturePoint = highestPriorityOrder.target as CapturePoint;
+					if (capturePoint != null && capturePoint.IsUnderAttack())
+					{
+						num2 *= 0.6f;
+					}
+				}
+				if (num2 < 120f)
+				{
+					distance = WeaponManager.WeaponEntry.Distance.Short;
+				}
+				else if (num2 < 500f)
+				{
+					distance = WeaponManager.WeaponEntry.Distance.Mid;
+				}
+				else
+				{
+					distance = WeaponManager.WeaponEntry.Distance.Far;
+				}
+			}
+			else if (CoverManager.instance.IsInCqcCell(highestPriorityOrder.source.transform.position) && Random.Range(0f, 1f) < 0.25f)
+			{
+				distance = WeaponManager.WeaponEntry.Distance.Short;
+			}
+			else
+			{
+				distance = ((Random.Range(0f, 1f) < 0.6f) ? WeaponManager.WeaponEntry.Distance.Mid : WeaponManager.WeaponEntry.Distance.Far);
+			}
+			int num3 = Random.Range(3, 6);
+			if (vehicle != null)
+			{
+				num3 = vehicle.seats.Count;
+			}
+			if (highestPriorityOrder.type == Order.OrderType.Repair)
+			{
+				num3 = 1;
+			}
+			num3 = Mathf.Min(num3, actorsToSpawn.Count);
+			List<ActorController> list = new List<ActorController>();
+			for (int j = 0; j < num3; j++)
+			{
+				Actor actor2 = actorsToSpawn[0];
+				actorsToSpawn.RemoveAt(0);
+				AiActorController aiActorController = (AiActorController)actor2.controller;
+				if (highestPriorityOrder.type == Order.OrderType.Repair)
+				{
+					aiActorController.loadoutStrategy.type = WeaponManager.WeaponEntry.LoadoutType.Repair;
+				}
+				else if (highestPriorityOrder.type == Order.OrderType.Defend)
+				{
+					CapturePoint capturePoint2 = highestPriorityOrder.target as CapturePoint;
+					if (capturePoint2 != null && capturePoint2.isUnderAttackByVehicles && Random.Range(0f, 1f) > 0.5f)
+					{
+						aiActorController.loadoutStrategy.type = WeaponManager.WeaponEntry.LoadoutType.AntiArmor;
+					}
+					else
+					{
+						aiActorController.loadoutStrategy.type = WeaponManager.WeaponEntry.LoadoutType.Normal;
+					}
+				}
+				else if (Random.Range(0f, 1f) < 0.2f)
+				{
+					aiActorController.loadoutStrategy.type = WeaponManager.WeaponEntry.LoadoutType.SmokeScreen;
+				}
+				else
+				{
+					aiActorController.loadoutStrategy.type = WeaponManager.WeaponEntry.LoadoutType.Normal;
+				}
+				aiActorController.loadoutStrategy.distance = distance;
+				if (aiActorController.loadoutStrategy.distance == WeaponManager.WeaponEntry.Distance.Short && Random.Range(0f, 1f) < 0.3f)
+				{
+					aiActorController.loadoutStrategy.distance = WeaponManager.WeaponEntry.Distance.Mid;
+				}
+				if (aiActorController.loadoutStrategy.distance == WeaponManager.WeaponEntry.Distance.Mid && Random.Range(0f, 1f) < 0.4f)
+				{
+					aiActorController.loadoutStrategy.distance = WeaponManager.WeaponEntry.Distance.Far;
+				}
+				else if (aiActorController.loadoutStrategy.distance == WeaponManager.WeaponEntry.Distance.Far && Random.Range(0f, 1f) < 0.4f)
+				{
+					aiActorController.loadoutStrategy.distance = WeaponManager.WeaponEntry.Distance.Mid;
+				}
+				actor2.SpawnAt(spawnPoint2.GetSpawnPosition(), Quaternion.identity, null);
+				list.Add(actor2.controller);
+			}
+			Squad squad = new Squad(list, highestPriorityOrder.source, highestPriorityOrder, vehicle, 0.3f);
+			squad.SetRandomFormation();
+			this.OnSquadSpawned(squad);
+			yield return 0;
+			yield return 0;
+		}
+		this.teamDeferredSpawn[team].Complete();
+		yield break;
+	}
+
+	// Token: 0x0600099A RID: 2458 RVA: 0x00037787 File Offset: 0x00035987
+	public virtual void OnSquadSpawned(Squad squad)
+	{
+	}
+
+	// Token: 0x0600099B RID: 2459 RVA: 0x00037789 File Offset: 0x00035989
+	public void SpawnBotActor(Actor actor, Vector3 position, AiActorController.LoadoutPickStrategy loadoutStrategy)
+	{
+		((AiActorController)actor.controller).loadoutStrategy = loadoutStrategy;
+		actor.SpawnAt(position, Quaternion.identity, null);
+	}
+
+	// Token: 0x0600099C RID: 2460 RVA: 0x000377AC File Offset: 0x000359AC
+	protected Vehicle GetAvailableVehicleForAttack(int team, Order order, out SpawnPoint squadSpawnPoint)
+	{
+		squadSpawnPoint = order.source;
+		Vehicle vehicle = order.source.GetAvailableVehicle(order.requiredVehicleFilter, -1);
+		byte b = 0;
+		if (vehicle == null)
+		{
+			foreach (SpawnPoint spawnPoint in ActorManager.instance.spawnPoints)
+			{
+				if (spawnPoint.owner == team && spawnPoint != order.source)
+				{
+					VehicleFilter vehicleFilter = order.requiredVehicleFilter.Clone();
+					vehicleFilter.watercraft = (vehicleFilter.watercraft && SpawnPointNeighborManager.HasWaterConnection(spawnPoint, order.target));
+					vehicleFilter.landcraft = (vehicleFilter.landcraft && SpawnPointNeighborManager.HasLandConnection(spawnPoint, order.target));
+					vehicleFilter.allowOnlyFromFrontlineSpawnUsage = false;
+					byte b2;
+					Vehicle availableVehicle = spawnPoint.GetAvailableVehicle(vehicleFilter, out b2, -1);
+					if (availableVehicle != null && b2 >= b)
+					{
+						vehicle = availableVehicle;
+						squadSpawnPoint = spawnPoint;
+					}
+				}
+			}
+		}
+		return vehicle;
+	}
+
+	// Token: 0x0600099D RID: 2461 RVA: 0x0003789C File Offset: 0x00035A9C
+	public virtual WeaponManager.LoadoutSet GetLoadout(Actor actor)
+	{
+		return actor.controller.GetLoadout();
+	}
+
+	// Token: 0x0600099E RID: 2462 RVA: 0x000378A9 File Offset: 0x00035AA9
+	public virtual void Win(int winningTeam)
+	{
+		VictoryUi.EndGame(winningTeam, this.canContinuePlayingAfterGameEnd);
+		GameManager.gameResult.winningTeam = winningTeam;
+	}
+
+	// Token: 0x0600099F RID: 2463 RVA: 0x000378C2 File Offset: 0x00035AC2
+	public virtual string GetName()
+	{
+		return base.GetType().ToString();
+	}
+
+	// Token: 0x04000908 RID: 2312
+	public static GameModeBase activeGameMode;
+
+	// Token: 0x04000909 RID: 2313
+	private const int MINIMUM_ACTORS_IN_WAVE = 2;
+
+	// Token: 0x0400090A RID: 2314
+	private const float SPAWN_WAVE_REPEAT_TIME = 4f;
+
+	// Token: 0x0400090B RID: 2315
+	private const float SMOKE_SCREEN_LOADOUT_CHANCE = 0.2f;
+
+	// Token: 0x0400090C RID: 2316
+	[NonSerialized]
+	public Canvas canvas;
+
+	// Token: 0x0400090D RID: 2317
+	[NonSerialized]
+	public bool allowDefaultRespawn = true;
+
+	// Token: 0x0400090E RID: 2318
+	public string gameModeName = "NEW GAME MODE";
+
+	// Token: 0x0400090F RID: 2319
+	public GameModeBase.LoadoutUIType loadoutType;
+
+	// Token: 0x04000910 RID: 2320
+	public ScoreboardUIType scoreboardType;
+
+	// Token: 0x04000911 RID: 2321
+	[NonSerialized]
+	public GameModeBase.SpawnLayout spawnLayout;
+
+	// Token: 0x04000912 RID: 2322
+	public const float MIN_DEAD_TIME = 6f;
+
+	// Token: 0x04000913 RID: 2323
+	public const float AI_MAX_FIRST_SPAWN_TIME = 7f;
+
+	// Token: 0x04000914 RID: 2324
+	private float startTime;
+
+	// Token: 0x04000915 RID: 2325
+	private TimedAction respawnWaveAction = new TimedAction(1f, false);
+
+	// Token: 0x04000916 RID: 2326
+	[NonSerialized]
+	public int[] maxActiveSoldiersAllowed = new int[]
+	{
+		int.MaxValue,
+		int.MaxValue
+	};
+
+	// Token: 0x04000917 RID: 2327
+	public bool canConfigureFlags = true;
+
+	// Token: 0x04000918 RID: 2328
+	public bool canContinuePlayingAfterGameEnd = true;
+
+	// Token: 0x04000919 RID: 2329
+	public bool autoOpenLoadoutOnStart = true;
+
+	// Token: 0x0400091A RID: 2330
+	private GameModeBase.DeferredTeamSpawn[] teamDeferredSpawn = new GameModeBase.DeferredTeamSpawn[2];
+
+	// Token: 0x020007E1 RID: 2017
+	public enum SpawnLayout
+	{
+		// Token: 0x04002A12 RID: 10770
+		Default,
+		// Token: 0x04002A13 RID: 10771
+		UserDefined,
+		// Token: 0x04002A14 RID: 10772
+		GameModeOverride
+	}
+
+	// Token: 0x020007E2 RID: 2018
+	public enum LoadoutUIType
+	{
+		// Token: 0x04002A16 RID: 10774
+		Default,
+		// Token: 0x04002A17 RID: 10775
+		None
+	}
+
+	// Token: 0x020007E3 RID: 2019
+	public struct DeferredTeamSpawn
+	{
+		// Token: 0x06004FCE RID: 20430 RVA: 0x0013376E File Offset: 0x0013196E
+		public void Schedule()
+		{
+			this.pending += 1;
+		}
+
+		// Token: 0x06004FCF RID: 20431 RVA: 0x0013377F File Offset: 0x0013197F
+		public void Complete()
+		{
+			this.pending -= 1;
+		}
+
+		// Token: 0x06004FD0 RID: 20432 RVA: 0x00133790 File Offset: 0x00131990
+		public bool IsRunning()
+		{
+			return this.pending > 0;
+		}
+
+		// Token: 0x04002A18 RID: 10776
+		public byte pending;
+	}
+}

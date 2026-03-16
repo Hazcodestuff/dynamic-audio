@@ -1,0 +1,105 @@
+using System;
+using UnityEngine;
+using UnityEngine.Audio;
+
+// Token: 0x02000104 RID: 260
+public class AudioManager : MonoBehaviour
+{
+	// Token: 0x06000A50 RID: 2640 RVA: 0x0003D320 File Offset: 0x0003B520
+	public static void TransitionToSnapshot(AudioManager.AudioSnapshot snapshot, float time)
+	{
+		AudioManager.instance.snapshots[(int)snapshot].TransitionTo(time);
+	}
+
+	// Token: 0x06000A51 RID: 2641 RVA: 0x0003D334 File Offset: 0x0003B534
+	public static void TransitionToDefaultPlayerMix(float time)
+	{
+		AudioManager.TransitionToSnapshot(LocalPlayer.controller.UseEnclosedMix() ? AudioManager.AudioSnapshot.Enclosed : AudioManager.AudioSnapshot.Default, time);
+	}
+
+	// Token: 0x06000A52 RID: 2642 RVA: 0x0003D34C File Offset: 0x0003B54C
+	public static void OnPrepareSwitchLevel()
+	{
+		AudioManager.TransitionToSnapshot(AudioManager.AudioSnapshot.Zero, 0f);
+	}
+
+	// Token: 0x06000A53 RID: 2643 RVA: 0x0003D359 File Offset: 0x0003B559
+	public static void OnIngameLevelStarted()
+	{
+		AudioManager.TransitionToSnapshot(AudioManager.AudioSnapshot.Default, 1f);
+	}
+
+	// Token: 0x06000A54 RID: 2644 RVA: 0x0003D366 File Offset: 0x0003B566
+	public static void PausePlayback()
+	{
+		AudioListener.pause = true;
+	}
+
+	// Token: 0x06000A55 RID: 2645 RVA: 0x0003D36E File Offset: 0x0003B56E
+	public static void ResumePlayback()
+	{
+		AudioListener.pause = false;
+	}
+
+	// Token: 0x06000A56 RID: 2646 RVA: 0x0003D378 File Offset: 0x0003B578
+	private void Awake()
+	{
+		AudioManager.instance = this;
+		this.snapshots = new AudioMixerSnapshot[]
+		{
+			this.defaultMix,
+			this.enclosedMix,
+			this.deafMix,
+			this.endMix,
+			this.zeroMix,
+			this.reducedIngameMix
+		};
+	}
+
+	// Token: 0x04000A41 RID: 2625
+	public static AudioManager instance;
+
+	// Token: 0x04000A42 RID: 2626
+	public global::AudioMixer mixer;
+
+	// Token: 0x04000A43 RID: 2627
+	public AudioMixerSnapshot defaultMix;
+
+	// Token: 0x04000A44 RID: 2628
+	public AudioMixerSnapshot enclosedMix;
+
+	// Token: 0x04000A45 RID: 2629
+	public AudioMixerSnapshot deafMix;
+
+	// Token: 0x04000A46 RID: 2630
+	public AudioMixerSnapshot endMix;
+
+	// Token: 0x04000A47 RID: 2631
+	public AudioMixerSnapshot zeroMix;
+
+	// Token: 0x04000A48 RID: 2632
+	public AudioMixerSnapshot reducedIngameMix;
+
+	// Token: 0x04000A49 RID: 2633
+	public AudioClip[] blipSounds;
+
+	// Token: 0x04000A4A RID: 2634
+	private AudioMixerSnapshot[] snapshots;
+
+	// Token: 0x02000807 RID: 2055
+	public enum AudioSnapshot
+	{
+		// Token: 0x04002AA5 RID: 10917
+		Default,
+		// Token: 0x04002AA6 RID: 10918
+		Enclosed,
+		// Token: 0x04002AA7 RID: 10919
+		Deaf,
+		// Token: 0x04002AA8 RID: 10920
+		GameEnd,
+		// Token: 0x04002AA9 RID: 10921
+		Zero,
+		// Token: 0x04002AAA RID: 10922
+		ReducedIngame
+	}
+}

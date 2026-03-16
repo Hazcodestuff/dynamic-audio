@@ -1,0 +1,933 @@
+using System;
+using System.Collections.Generic;
+using Lua;
+using UnityEngine;
+using UnityEngine.UI;
+
+// Token: 0x02000200 RID: 512
+public class IngameUI : MonoBehaviour
+{
+	// Token: 0x0600133A RID: 4922 RVA: 0x0006AE84 File Offset: 0x00069084
+	public static void ShowOverlayText(string text, float duration = 3.5f)
+	{
+		RavenscriptManager.events.onOverlayText.Invoke(text, duration);
+		IngameUI.instance.overlayText.text = text;
+		IngameUI.instance.overlayTextFadeGroup.Hide();
+		IngameUI.instance.overlayTextFadeGroup.FadeIn(0.2f);
+		IngameUI.instance.overlayTextFadeGroup.FadeOutAfter(duration + 0.7f, 0.5f);
+	}
+
+	// Token: 0x0600133B RID: 4923 RVA: 0x0006AEF0 File Offset: 0x000690F0
+	public static void UpdateCollectionVisibility(IngameUI.UIElement[] elements, bool visible)
+	{
+		for (int i = 0; i < elements.Length; i++)
+		{
+			IngameUI.instance.modularElementsIsActive[(int)elements[i]] = visible;
+		}
+		IngameUI.instance.UpdateElementVisibility();
+	}
+
+	// Token: 0x0600133C RID: 4924 RVA: 0x0006AF24 File Offset: 0x00069124
+	public static void ShowElement(IngameUI.UIElement element)
+	{
+		IngameUI.instance.modularElementsIsActive[(int)element] = true;
+		IngameUI.instance.UpdateElementVisibility();
+	}
+
+	// Token: 0x0600133D RID: 4925 RVA: 0x0006AF3D File Offset: 0x0006913D
+	public static void HideElement(IngameUI.UIElement element)
+	{
+		IngameUI.instance.modularElementsIsActive[(int)element] = false;
+		IngameUI.instance.UpdateElementVisibility();
+	}
+
+	// Token: 0x0600133E RID: 4926 RVA: 0x0006AF58 File Offset: 0x00069158
+	public static void OnPlayerRepairedVehicle(Vehicle vehicle, float healAmount)
+	{
+		RavenscriptManager.events.onPlayerRepairedVehicle.Invoke(vehicle, healAmount);
+		IngameUI.instance.repairVehicleFadeGroup.SetVehicle(vehicle);
+		IngameUI.instance.repairVehicleFadeGroup.FadeIn(0.2f);
+		IngameUI.instance.repairVehicleFadeGroup.FadeOutAfter(2f, 0.5f);
+	}
+
+	// Token: 0x0600133F RID: 4927 RVA: 0x0006AFB4 File Offset: 0x000691B4
+	public static void OnDamageDealt(DamageInfo info, HitInfo hit, bool showHitIndicator)
+	{
+		try
+		{
+			if (info.isPlayerSource)
+			{
+				RavenscriptManager.events.onPlayerDealtDamage.Invoke(info, hit);
+				if (showHitIndicator && IngameUI.showHitmarkers && IngameUI.instance.ElementIsVisible(IngameUI.UIElement.Hitmarker))
+				{
+					IngameUI.instance.ShowHitmarker();
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			ModManager.HandleModException(e);
+		}
+	}
+
+	// Token: 0x06001340 RID: 4928 RVA: 0x0006B018 File Offset: 0x00069218
+	public static void OnPlayerTookOverBot()
+	{
+		IngameUI.instance.UpdateWeaponsPanel(LocalPlayer.actor);
+	}
+
+	// Token: 0x06001341 RID: 4929 RVA: 0x0006B029 File Offset: 0x00069229
+	public static void OnPlayerEvent()
+	{
+	}
+
+	// Token: 0x06001342 RID: 4930 RVA: 0x0006B02B File Offset: 0x0006922B
+	public static void OnLoadoutEvent()
+	{
+	}
+
+	// Token: 0x06001343 RID: 4931 RVA: 0x0006B02D File Offset: 0x0006922D
+	public static bool IsVisible()
+	{
+		return IngameUI.instance.canvas.enabled;
+	}
+
+	// Token: 0x06001344 RID: 4932 RVA: 0x0006B03E File Offset: 0x0006923E
+	private void Start()
+	{
+		this.overlayTextFadeGroup.Hide();
+	}
+
+	// Token: 0x06001345 RID: 4933 RVA: 0x0006B04C File Offset: 0x0006924C
+	private void Awake()
+	{
+		IngameUI.instance = this;
+		this.canvas = base.GetComponent<Canvas>();
+		this.vehicleContainer.SetActive(false);
+		this.canvas.enabled = false;
+		this.showUI = false;
+		int length = Enum.GetValues(typeof(IngameUI.UIElement)).Length;
+		this.modularElementsIsActive = new bool[length];
+		for (int i = 0; i < length; i++)
+		{
+			this.modularElementsIsActive[i] = true;
+		}
+		this.squadMemberPanels = new SquadMemberPanel[8];
+		for (int j = 0; j < 8; j++)
+		{
+			this.squadMemberPanels[j] = Object.Instantiate<GameObject>(this.squadMemberPanelPrefab, this.squadPanelContainer.transform, false).GetComponent<SquadMemberPanel>();
+			this.squadMemberPanels[j].Deactivate();
+		}
+		this.squadExtraMembersText.transform.SetAsLastSibling();
+		this.itemPanels = new WeaponPanel[5];
+		for (int k = 0; k < 5; k++)
+		{
+			this.itemPanels[k] = Object.Instantiate<GameObject>(this.itemPanelPrefab, this.itemContainer.transform, false).GetComponent<WeaponPanel>();
+			this.itemPanels[k].Deactivate();
+		}
+	}
+
+	// Token: 0x06001346 RID: 4934 RVA: 0x0006B162 File Offset: 0x00069362
+	public void LateUpdate()
+	{
+		this.PollStatus();
+	}
+
+	// Token: 0x06001347 RID: 4935 RVA: 0x0006B16A File Offset: 0x0006936A
+	public bool ElementIsVisible(IngameUI.UIElement element)
+	{
+		return this.modularElementsIsActive[(int)element];
+	}
+
+	// Token: 0x06001348 RID: 4936 RVA: 0x0006B174 File Offset: 0x00069374
+	private void UpdateElementVisibility()
+	{
+		this.playerHealthElement.SetActive(this.ElementIsVisible(IngameUI.UIElement.PlayerHealth));
+		this.vehicleContainer.SetActive(this.playerIsSeated && this.ElementIsVisible(IngameUI.UIElement.VehicleInfo));
+		this.vehicleRepairElement.SetActive(this.ElementIsVisible(IngameUI.UIElement.VehicleRepairInfo));
+		bool flag = this.nSquadmates > 0;
+		this.squadInfoContainer.SetActive(flag && this.ElementIsVisible(IngameUI.UIElement.SquadOrderLabel));
+		this.squadPanelContainer.SetActive(flag && this.ElementIsVisible(IngameUI.UIElement.SquadMemberInfo));
+		bool flag2 = this.activeWeapon != null;
+		this.loadoutElement.SetActive(this.ElementIsVisible(IngameUI.UIElement.WeaponInfo));
+		if (flag2)
+		{
+			this.loadoutFadeGroup.FadeIn(0.2f);
+		}
+		else
+		{
+			this.loadoutFadeGroup.FadeOut(0.2f);
+		}
+		this.flagCaptureElement.SetActive(this.ElementIsVisible(IngameUI.UIElement.FlagCaptureProgress));
+		this.overlayTextElement.SetActive(this.ElementIsVisible(IngameUI.UIElement.OverlayText));
+	}
+
+	// Token: 0x06001349 RID: 4937 RVA: 0x0006B264 File Offset: 0x00069464
+	private void PollStatus()
+	{
+		Actor actor = LocalPlayer.actor;
+		if (IngameUI.PollChange<bool>(ref this.showUI, this.ShowUI(actor)))
+		{
+			this.canvas.enabled = this.showUI;
+		}
+		if (IngameUI.PollChange<bool>(ref this.playerIsDead, actor.dead))
+		{
+			if (!this.playerIsDead)
+			{
+				this.OnPlayerSpawned(actor);
+			}
+			else
+			{
+				this.OnPlayerDied(actor);
+			}
+			IngameUI.OnPlayerEvent();
+		}
+		if (this.showUI)
+		{
+			this.PollPlayerHealth(actor);
+			this.PollPlayerVehicle(actor);
+			this.PollPlayerWeapon(actor);
+			this.PollPlayerCapture(actor);
+			this.PollPlayerSquad(LocalPlayer.squad);
+			this.hitmarker.enabled = !this.hitmarkerAction.TrueDone();
+		}
+	}
+
+	// Token: 0x0600134A RID: 4938 RVA: 0x0006B314 File Offset: 0x00069514
+	private void OnPlayerDied(Actor playerActor)
+	{
+		this.flagCapturePanel.Hide();
+	}
+
+	// Token: 0x0600134B RID: 4939 RVA: 0x0006B321 File Offset: 0x00069521
+	private void OnPlayerSpawned(Actor playerActor)
+	{
+		this.healFeedbackCooldown.Start();
+		this.resupplyFeedbackCooldown.Start();
+		this.UpdateWeaponsPanel(playerActor);
+		this.reloadBar.SetBarColor(false, 0.7f);
+	}
+
+	// Token: 0x0600134C RID: 4940 RVA: 0x0006B351 File Offset: 0x00069551
+	private bool ShowUI(Actor player)
+	{
+		return GameManager.instance.playerUIEnabled && !player.dead && !LocalPlayer.controller.playingVictoryAnimation;
+	}
+
+	// Token: 0x0600134D RID: 4941 RVA: 0x0006B378 File Offset: 0x00069578
+	private void PollPlayerCapture(Actor player)
+	{
+		if (IngameUI.PollChange<CapturePoint>(ref this.capturePoint, player.GetCurrentCapturePoint()))
+		{
+			if (this.capturePoint != null)
+			{
+				this.flagCapturePanel.OnPlayerBeginCapture(this.capturePoint);
+			}
+			else
+			{
+				this.flagCapturePanel.OnPlayerEndCapture();
+			}
+		}
+		if (this.capturePoint != null)
+		{
+			this.flagCapturePanel.UpdateCapture(player, this.capturePoint);
+		}
+	}
+
+	// Token: 0x0600134E RID: 4942 RVA: 0x0006B3E4 File Offset: 0x000695E4
+	private void PollPlayerSquad(Squad playerSquad)
+	{
+		if (IngameUI.PollChange<int>(ref this.nSquadmates, playerSquad.aiMembers.Count))
+		{
+			this.UpdateElementVisibility();
+			IngameUI.OnPlayerEvent();
+		}
+		if (this.squadPanelContainer.activeInHierarchy)
+		{
+			this.UpdateSquadInfo(playerSquad);
+		}
+		if (this.squadInfoContainer.activeInHierarchy && IngameUI.PollChange<IngameUI.PlayerOrderState>(ref this.orderState, IngameUI.GetPlayerOrderState(playerSquad)))
+		{
+			switch (this.orderState)
+			{
+			case IngameUI.PlayerOrderState.Follow:
+				this.squadInfoText.text = "SQUAD - FOLLOW";
+				return;
+			case IngameUI.PlayerOrderState.Goto:
+				this.squadInfoText.text = "SQUAD - GO TO";
+				return;
+			case IngameUI.PlayerOrderState.Hold:
+				this.squadInfoText.text = "SQUAD - HOLD";
+				break;
+			default:
+				return;
+			}
+		}
+	}
+
+	// Token: 0x0600134F RID: 4943 RVA: 0x0006B494 File Offset: 0x00069694
+	private void UpdateWeaponsPanel(Actor playerActor)
+	{
+		if (playerActor.IsSeated())
+		{
+			if (playerActor.seat.HasAnyMountedWeapons())
+			{
+				this.ShowWeaponsMounted(playerActor.seat);
+			}
+			else if (playerActor.seat.CanUsePersonalWeapons())
+			{
+				this.ShowWeaponsPlayerCarried(playerActor);
+			}
+		}
+		else
+		{
+			this.ShowWeaponsPlayerCarried(playerActor);
+		}
+		IngameUI.OnLoadoutEvent();
+	}
+
+	// Token: 0x06001350 RID: 4944 RVA: 0x0006B4E8 File Offset: 0x000696E8
+	private void SetupWeaponPanels(IEnumerable<Weapon> weapons)
+	{
+		for (int i = 0; i < 5; i++)
+		{
+			this.itemPanels[i].Deactivate();
+		}
+		int num = 0;
+		foreach (Weapon weapon in weapons)
+		{
+			if (num >= 5)
+			{
+				break;
+			}
+			this.itemPanels[num].Activate(weapon);
+			num++;
+		}
+		int num2 = 4;
+		while (num2 >= 0 && (!this.itemPanels[num2].gameObject.activeSelf || this.itemPanels[num2].weapon == null))
+		{
+			this.itemPanels[num2].Deactivate();
+			num2--;
+		}
+		this.UpdateActiveWeaponPanel();
+	}
+
+	// Token: 0x06001351 RID: 4945 RVA: 0x0006B5AC File Offset: 0x000697AC
+	private void ShowWeaponsMounted(Seat seat)
+	{
+		this.SetupWeaponPanels(seat.weapons);
+	}
+
+	// Token: 0x06001352 RID: 4946 RVA: 0x0006B5BA File Offset: 0x000697BA
+	private void ShowWeaponsPlayerCarried(Actor playerActor)
+	{
+		this.SetupWeaponPanels(playerActor.weapons);
+	}
+
+	// Token: 0x06001353 RID: 4947 RVA: 0x0006B5C8 File Offset: 0x000697C8
+	private void UpdateSquadInfo(Squad playerSquad)
+	{
+		int num = Mathf.Min(playerSquad.aiMembers.Count, 8);
+		for (int i = 0; i < num; i++)
+		{
+			Actor actor = playerSquad.aiMembers[i].actor;
+			this.squadMemberPanels[i].Activate();
+			this.squadMemberPanels[i].PollActor(actor);
+		}
+		for (int j = num; j < 8; j++)
+		{
+			this.squadMemberPanels[j].Deactivate();
+		}
+		if (playerSquad.aiMembers.Count > 8)
+		{
+			this.squadExtraMembersText.enabled = true;
+			this.squadExtraMembersText.text = string.Format("+{0}", playerSquad.aiMembers.Count - 8);
+			return;
+		}
+		this.squadExtraMembersText.enabled = false;
+	}
+
+	// Token: 0x06001354 RID: 4948 RVA: 0x0006B687 File Offset: 0x00069887
+	public static IngameUI.PlayerOrderState GetPlayerOrderState(Squad playerSquad)
+	{
+		if (playerSquad.isFollowingLeader)
+		{
+			return IngameUI.PlayerOrderState.Follow;
+		}
+		if (playerSquad.NoAiMemberHasPath())
+		{
+			return IngameUI.PlayerOrderState.Hold;
+		}
+		return IngameUI.PlayerOrderState.Goto;
+	}
+
+	// Token: 0x06001355 RID: 4949 RVA: 0x0006B6A0 File Offset: 0x000698A0
+	private void PollPlayerHealth(Actor player)
+	{
+		float num = this.playerHealth;
+		if (IngameUI.PollChange<float>(ref this.playerHealth, player.health))
+		{
+			this.playerHealthBar.SetBarProgress(this.playerHealth / 100f);
+			this.playerHealthBar.SetText(Mathf.Max(1, (int)this.playerHealth).ToString());
+			if (this.playerHealth > num && this.healFeedbackCooldown.TrueDone())
+			{
+				this.playerHealthBar.SetBarColor(Color.white, 0f);
+				this.playerHealthBar.SetBarColor(this.playerHealth < 30f, 0.7f);
+				this.healFeedbackCooldown.Start();
+				IngameUI.OnPlayerEvent();
+				return;
+			}
+			this.playerHealthBar.SetBarColor(this.playerHealth < 30f, 0.2f);
+		}
+	}
+
+	// Token: 0x06001356 RID: 4950 RVA: 0x0006B77C File Offset: 0x0006997C
+	private void PollPlayerWeapon(Actor player)
+	{
+		Weapon weapon = player.activeWeapon;
+		bool flag = IngameUI.PollChange<Weapon>(ref this.activeWeapon, (weapon != null) ? weapon.GetActiveSubWeapon() : null);
+		if (flag)
+		{
+			this.OnPlayerChangedWeapon();
+			this.UpdateElementVisibility();
+		}
+		if (this.activeWeapon != null)
+		{
+			Weapon parentWeapon = this.activeWeapon;
+			if (parentWeapon.useParentWeaponSightModes && parentWeapon.parentWeapon != null)
+			{
+				parentWeapon = parentWeapon.parentWeapon;
+			}
+			if (IngameUI.PollChange<bool>(ref this.isReloadingWeapon, this.activeWeapon.reloading))
+			{
+				IngameUI.OnLoadoutEvent();
+			}
+			if (this.isReloadingWeapon && !this.activeWeapon.configuration.advancedReload)
+			{
+				this.reloadBar.SetBarProgress(this.activeWeapon.GetReloadProgress());
+			}
+			else
+			{
+				this.reloadBar.SetBarProgress(1f);
+			}
+			if (IngameUI.PollChange<int>(ref this.sightMode, parentWeapon.GetSightModeIndex()))
+			{
+				if (this.sightMode == -1)
+				{
+					this.activeScopeNameText.text = "";
+				}
+				else
+				{
+					this.activeScopeNameText.text = parentWeapon.GetSightMode().name;
+				}
+			}
+			if (IngameUI.PollChange<int>(ref this.activeWeaponAmmo, this.activeWeapon.ammo))
+			{
+				this.activeWeaponAmmoText.text = this.GetAmmoString(this.activeWeaponAmmo);
+			}
+			int num = this.activeWeaponSpareAmmo;
+			if (IngameUI.PollChange<int>(ref this.activeWeaponSpareAmmo, this.activeWeapon.spareAmmo))
+			{
+				this.activeWeaponSpareAmmoText.text = this.GetAmmoString(this.activeWeaponSpareAmmo);
+				if (!flag && this.activeWeaponSpareAmmo > num && num >= 0 && this.resupplyFeedbackCooldown.TrueDone())
+				{
+					this.reloadBar.SetBarColor(true, 0f);
+					this.reloadBar.SetBarColor(false, 0.7f);
+					this.resupplyFeedbackCooldown.Start();
+					IngameUI.OnLoadoutEvent();
+				}
+			}
+		}
+	}
+
+	// Token: 0x06001357 RID: 4951 RVA: 0x0006B942 File Offset: 0x00069B42
+	private string GetAmmoString(int count)
+	{
+		if (count >= 0)
+		{
+			return count.ToString();
+		}
+		return "∞";
+	}
+
+	// Token: 0x06001358 RID: 4952 RVA: 0x0006B955 File Offset: 0x00069B55
+	private string GetWeaponName(Weapon weapon)
+	{
+		if (weapon == null)
+		{
+			return "";
+		}
+		return weapon.displayName;
+	}
+
+	// Token: 0x06001359 RID: 4953 RVA: 0x0006B96C File Offset: 0x00069B6C
+	private void OnPlayerChangedWeapon()
+	{
+		this.activeWeaponNameText.text = this.GetWeaponName(this.activeWeapon);
+		this.UpdateActiveWeaponPanel();
+	}
+
+	// Token: 0x0600135A RID: 4954 RVA: 0x0006B98C File Offset: 0x00069B8C
+	private void UpdateActiveWeaponPanel()
+	{
+		Weapon parentWeapon = this.activeWeapon;
+		if (parentWeapon != null)
+		{
+			while (parentWeapon.parentWeapon != null)
+			{
+				parentWeapon = parentWeapon.parentWeapon;
+			}
+		}
+		this.sightMode = int.MinValue;
+		for (int i = 0; i < 5; i++)
+		{
+			if (parentWeapon != null && parentWeapon == this.itemPanels[i].weapon)
+			{
+				this.itemPanels[i].Highlight();
+			}
+			else
+			{
+				this.itemPanels[i].DropHighlight();
+			}
+		}
+	}
+
+	// Token: 0x0600135B RID: 4955 RVA: 0x0006BA14 File Offset: 0x00069C14
+	public static string FormatVehicleHealthString(float normalizedHealth)
+	{
+		return ((int)(normalizedHealth * 100f)).ToString();
+	}
+
+	// Token: 0x0600135C RID: 4956 RVA: 0x0006BA34 File Offset: 0x00069C34
+	private void PollPlayerVehicle(Actor player)
+	{
+		if (IngameUI.PollChange<bool>(ref this.playerIsSeated, player.IsSeated()))
+		{
+			this.UpdateElementVisibility();
+			if (this.playerIsSeated)
+			{
+				this.OnPlayerEnteredVehicle(player.seat.vehicle, player);
+			}
+			else
+			{
+				this.OnPlayerExitedVehicle(player);
+			}
+			IngameUI.OnPlayerEvent();
+		}
+		if (this.playerIsSeated)
+		{
+			if (IngameUI.PollChange<int>(ref this.playerSeatIndex, this.GetActorSeatIndex(player, player.seat.vehicle)))
+			{
+				this.OnPlayerSwitchedSeat(player);
+				IngameUI.OnPlayerEvent();
+			}
+			Vehicle vehicle = player.seat.vehicle;
+			float num = vehicle.health / vehicle.maxHealth;
+			if (IngameUI.PollChange<float>(ref this.vehicleHealth, num))
+			{
+				this.vehicleHealthBar.SetBarProgress(num);
+				this.vehicleHealthBar.SetText(IngameUI.FormatVehicleHealthString(num));
+				this.vehicleHealthBar.SetBarColor(num < 0.3f, 0.2f);
+				IngameUI.OnPlayerEvent();
+			}
+			if (IngameUI.PollChange<int>(ref this.vehiclePassengers, vehicle.CountOccupants()))
+			{
+				this.vehiclePassengerContainer.SetActive(this.vehiclePassengers > 1);
+				this.vehiclePassengerCountText.text = this.vehiclePassengers.ToString();
+				IngameUI.OnPlayerEvent();
+			}
+			if (IngameUI.PollChange<bool>(ref this.countermeasuresAvailable, vehicle.hasCountermeasures && player.IsDriver()))
+			{
+				this.vehicleCountermeasureBar.gameObject.SetActive(this.countermeasuresAvailable);
+			}
+			if (this.countermeasuresAvailable)
+			{
+				if (IngameUI.PollChange<bool>(ref this.countermeasuresCooldown, !vehicle.CountermeasuresAreReady()))
+				{
+					this.vehicleCountermeasureBar.SetBarColor(this.countermeasuresCooldown, 0.2f);
+					this.vehicleCountermeasureBar.SetText(this.countermeasuresCooldown ? "" : "RDY");
+					this.vehicleCountermeasureBar.SetBarProgress(this.countermeasuresCooldown ? 0f : 1f);
+				}
+				if (this.countermeasuresCooldown)
+				{
+					this.vehicleCountermeasureBar.SetBarProgress(vehicle.GetCountermeasureCooldownRatio());
+				}
+			}
+		}
+	}
+
+	// Token: 0x0600135D RID: 4957 RVA: 0x0006BC20 File Offset: 0x00069E20
+	private int GetActorSeatIndex(Actor actor, Vehicle vehicle)
+	{
+		for (int i = 0; i < vehicle.seats.Count; i++)
+		{
+			if (vehicle.seats[i].occupant == actor)
+			{
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	// Token: 0x0600135E RID: 4958 RVA: 0x0006BC5F File Offset: 0x00069E5F
+	public static void OnScriptedWeaponChange()
+	{
+		IngameUI.instance.UpdateWeaponsPanel(LocalPlayer.actor);
+	}
+
+	// Token: 0x0600135F RID: 4959 RVA: 0x0006BC70 File Offset: 0x00069E70
+	private void OnPlayerEnteredVehicle(Vehicle vehicle, Actor playerActor)
+	{
+		this.vehicleNameText.text = vehicle.name;
+		this.vehicleHealth = -1f;
+		this.vehiclePassengers = -1;
+		this.playerSeatIndex = -1;
+		this.countermeasuresAvailable = false;
+		this.vehicleCountermeasureBar.gameObject.SetActive(false);
+		this.UpdateWeaponsPanel(playerActor);
+	}
+
+	// Token: 0x06001360 RID: 4960 RVA: 0x0006BCC6 File Offset: 0x00069EC6
+	private void OnPlayerExitedVehicle(Actor playerActor)
+	{
+		this.playerSeatIndex = -1;
+		this.UpdateWeaponsPanel(playerActor);
+	}
+
+	// Token: 0x06001361 RID: 4961 RVA: 0x0006BCD6 File Offset: 0x00069ED6
+	private void OnPlayerSwitchedSeat(Actor playerActor)
+	{
+		this.UpdateWeaponsPanel(playerActor);
+	}
+
+	// Token: 0x06001362 RID: 4962 RVA: 0x0006BCDF File Offset: 0x00069EDF
+	public static bool PollChange<T>(ref T cached, T current)
+	{
+		if (!EqualityComparer<T>.Default.Equals(current, cached))
+		{
+			cached = current;
+			return true;
+		}
+		return false;
+	}
+
+	// Token: 0x06001363 RID: 4963 RVA: 0x0006BCFE File Offset: 0x00069EFE
+	private void ShowHitmarker()
+	{
+		if (this.hitmarkerAction.TrueDone())
+		{
+			this.hitmarkerAction.Start();
+			this.hitmarkerSound.Play();
+		}
+	}
+
+	// Token: 0x06001364 RID: 4964 RVA: 0x0006BD24 File Offset: 0x00069F24
+	public static void PlayOutOfAmmoSound(int current, int maximum, float volume, float pitch)
+	{
+		float num = 1f - ((float)current - 2f) / ((float)maximum * 0.5f);
+		if (num <= 0f)
+		{
+			return;
+		}
+		num = Mathf.Clamp01(num);
+		IngameUI.instance.outOfAmmoSound.pitch = 1f + num * pitch;
+		IngameUI.instance.outOfAmmoSound.PlayOneShot(IngameUI.instance.outOfAmmoSound.clip, num * volume);
+	}
+
+	// Token: 0x06001365 RID: 4965 RVA: 0x0006BD92 File Offset: 0x00069F92
+	public static void OnResupply()
+	{
+		IngameUI.instance.resupplySoundBank.PlayRandom();
+	}
+
+	// Token: 0x06001366 RID: 4966 RVA: 0x0006BDA3 File Offset: 0x00069FA3
+	public static void OnHeal()
+	{
+		IngameUI.instance.healSoundBank.PlayRandom();
+	}
+
+	// Token: 0x0400124E RID: 4686
+	private const string SQUAD_FOLLOWING_STRING = "SQUAD - FOLLOW";
+
+	// Token: 0x0400124F RID: 4687
+	private const string SQUAD_GO_TO_STRING = "SQUAD - GO TO";
+
+	// Token: 0x04001250 RID: 4688
+	private const string SQUAD_HOLD_STRING = "SQUAD - HOLD";
+
+	// Token: 0x04001251 RID: 4689
+	public const float ELEMENT_CROSSFADE_TIME = 0.2f;
+
+	// Token: 0x04001252 RID: 4690
+	public const float ELEMENT_CROSSFADE_TIME_FEEDBACK = 0.7f;
+
+	// Token: 0x04001253 RID: 4691
+	private const float OVERLAY_FADE_IN_TIME = 0.2f;
+
+	// Token: 0x04001254 RID: 4692
+	private const float OVERLAY_FADE_OUT_TIME = 0.5f;
+
+	// Token: 0x04001255 RID: 4693
+	private const float VEHICLE_REPAIR_STAY_TIME = 2f;
+
+	// Token: 0x04001256 RID: 4694
+	private const int MAX_SQUADMEMBER_PANELS = 8;
+
+	// Token: 0x04001257 RID: 4695
+	private const int MAX_ITEMS = 5;
+
+	// Token: 0x04001258 RID: 4696
+	public static IngameUI instance;
+
+	// Token: 0x04001259 RID: 4697
+	public static bool showHitmarkers;
+
+	// Token: 0x0400125A RID: 4698
+	public GameObject squadMemberPanelPrefab;
+
+	// Token: 0x0400125B RID: 4699
+	public GameObject itemPanelPrefab;
+
+	// Token: 0x0400125C RID: 4700
+	public GameObject playerHealthElement;
+
+	// Token: 0x0400125D RID: 4701
+	public GameObject loadoutElement;
+
+	// Token: 0x0400125E RID: 4702
+	public GameObject vehicleRepairElement;
+
+	// Token: 0x0400125F RID: 4703
+	public GameObject flagCaptureElement;
+
+	// Token: 0x04001260 RID: 4704
+	public GameObject overlayTextElement;
+
+	// Token: 0x04001261 RID: 4705
+	public GameObject vehicleContainer;
+
+	// Token: 0x04001262 RID: 4706
+	public GameObject vehiclePassengerContainer;
+
+	// Token: 0x04001263 RID: 4707
+	public GameObject squadPanelContainer;
+
+	// Token: 0x04001264 RID: 4708
+	public GameObject squadInfoContainer;
+
+	// Token: 0x04001265 RID: 4709
+	public GameObject itemContainer;
+
+	// Token: 0x04001266 RID: 4710
+	public HealthBar playerHealthBar;
+
+	// Token: 0x04001267 RID: 4711
+	public HealthBar vehicleHealthBar;
+
+	// Token: 0x04001268 RID: 4712
+	public HealthBar vehicleCountermeasureBar;
+
+	// Token: 0x04001269 RID: 4713
+	public Text squadInfoText;
+
+	// Token: 0x0400126A RID: 4714
+	public Text squadExtraMembersText;
+
+	// Token: 0x0400126B RID: 4715
+	public Text vehicleNameText;
+
+	// Token: 0x0400126C RID: 4716
+	public Text vehiclePassengerCountText;
+
+	// Token: 0x0400126D RID: 4717
+	public Text activeWeaponAmmoText;
+
+	// Token: 0x0400126E RID: 4718
+	public Text activeWeaponSpareAmmoText;
+
+	// Token: 0x0400126F RID: 4719
+	public Text activeWeaponNameText;
+
+	// Token: 0x04001270 RID: 4720
+	public Text activeScopeNameText;
+
+	// Token: 0x04001271 RID: 4721
+	public Text overlayText;
+
+	// Token: 0x04001272 RID: 4722
+	public HealthBar reloadBar;
+
+	// Token: 0x04001273 RID: 4723
+	public RawImage hitmarker;
+
+	// Token: 0x04001274 RID: 4724
+	public AudioSource hitmarkerSound;
+
+	// Token: 0x04001275 RID: 4725
+	public AudioSource outOfAmmoSound;
+
+	// Token: 0x04001276 RID: 4726
+	public FlagCapturePanel flagCapturePanel;
+
+	// Token: 0x04001277 RID: 4727
+	public VehicleRepairInfoPanel repairVehicleFadeGroup;
+
+	// Token: 0x04001278 RID: 4728
+	public FadeableCanvasGroup overlayTextFadeGroup;
+
+	// Token: 0x04001279 RID: 4729
+	public FadeableCanvasGroup loadoutFadeGroup;
+
+	// Token: 0x0400127A RID: 4730
+	public GameObject loadoutPanel;
+
+	// Token: 0x0400127B RID: 4731
+	public SoundBank healSoundBank;
+
+	// Token: 0x0400127C RID: 4732
+	public SoundBank resupplySoundBank;
+
+	// Token: 0x0400127D RID: 4733
+	private bool[] modularElementsIsActive;
+
+	// Token: 0x0400127E RID: 4734
+	private Canvas canvas;
+
+	// Token: 0x0400127F RID: 4735
+	private SquadMemberPanel[] squadMemberPanels;
+
+	// Token: 0x04001280 RID: 4736
+	private WeaponPanel[] itemPanels;
+
+	// Token: 0x04001281 RID: 4737
+	private TimedAction hitmarkerAction = new TimedAction(0.1f, false);
+
+	// Token: 0x04001282 RID: 4738
+	private TimedAction healFeedbackCooldown = new TimedAction(1f, false);
+
+	// Token: 0x04001283 RID: 4739
+	private TimedAction resupplyFeedbackCooldown = new TimedAction(1f, false);
+
+	// Token: 0x04001284 RID: 4740
+	public static readonly IngameUI.UIElement[] ELEMENTS_ALL = new IngameUI.UIElement[]
+	{
+		IngameUI.UIElement.PlayerHealth,
+		IngameUI.UIElement.VehicleInfo,
+		IngameUI.UIElement.VehicleRepairInfo,
+		IngameUI.UIElement.SquadMemberInfo,
+		IngameUI.UIElement.SquadOrderLabel,
+		IngameUI.UIElement.WeaponInfo,
+		IngameUI.UIElement.DamageVignette,
+		IngameUI.UIElement.DamageDirectionInfo,
+		IngameUI.UIElement.Hitmarker,
+		IngameUI.UIElement.FlagCaptureProgress,
+		IngameUI.UIElement.OverlayText,
+		IngameUI.UIElement.KillFeed
+	};
+
+	// Token: 0x04001285 RID: 4741
+	public static readonly IngameUI.UIElement[] ELEMENTS_LEFT = new IngameUI.UIElement[]
+	{
+		IngameUI.UIElement.PlayerHealth,
+		IngameUI.UIElement.VehicleInfo,
+		IngameUI.UIElement.SquadMemberInfo,
+		IngameUI.UIElement.SquadOrderLabel
+	};
+
+	// Token: 0x04001286 RID: 4742
+	public static readonly IngameUI.UIElement[] ELEMENTS_RIGHT = new IngameUI.UIElement[]
+	{
+		IngameUI.UIElement.WeaponInfo
+	};
+
+	// Token: 0x04001287 RID: 4743
+	private bool showUI;
+
+	// Token: 0x04001288 RID: 4744
+	private bool playerIsDead = true;
+
+	// Token: 0x04001289 RID: 4745
+	private CapturePoint capturePoint;
+
+	// Token: 0x0400128A RID: 4746
+	private int nSquadmates;
+
+	// Token: 0x0400128B RID: 4747
+	private IngameUI.PlayerOrderState orderState;
+
+	// Token: 0x0400128C RID: 4748
+	private float playerHealth;
+
+	// Token: 0x0400128D RID: 4749
+	private Weapon activeWeapon;
+
+	// Token: 0x0400128E RID: 4750
+	private bool isReloadingWeapon;
+
+	// Token: 0x0400128F RID: 4751
+	private int activeWeaponAmmo = int.MinValue;
+
+	// Token: 0x04001290 RID: 4752
+	private int activeWeaponSpareAmmo = int.MinValue;
+
+	// Token: 0x04001291 RID: 4753
+	private int sightMode = -1;
+
+	// Token: 0x04001292 RID: 4754
+	private bool playerIsSeated;
+
+	// Token: 0x04001293 RID: 4755
+	private float vehicleHealth = -1f;
+
+	// Token: 0x04001294 RID: 4756
+	private int vehiclePassengers = -1;
+
+	// Token: 0x04001295 RID: 4757
+	private bool countermeasuresAvailable;
+
+	// Token: 0x04001296 RID: 4758
+	private bool countermeasuresCooldown;
+
+	// Token: 0x04001297 RID: 4759
+	private int playerSeatIndex = -1;
+
+	// Token: 0x020008B4 RID: 2228
+	public enum PlayerOrderState
+	{
+		// Token: 0x04002D63 RID: 11619
+		Follow,
+		// Token: 0x04002D64 RID: 11620
+		Goto,
+		// Token: 0x04002D65 RID: 11621
+		Hold
+	}
+
+	// Token: 0x020008B5 RID: 2229
+	public enum UIElement
+	{
+		// Token: 0x04002D67 RID: 11623
+		PlayerHealth,
+		// Token: 0x04002D68 RID: 11624
+		VehicleInfo,
+		// Token: 0x04002D69 RID: 11625
+		VehicleRepairInfo,
+		// Token: 0x04002D6A RID: 11626
+		SquadMemberInfo,
+		// Token: 0x04002D6B RID: 11627
+		SquadOrderLabel,
+		// Token: 0x04002D6C RID: 11628
+		WeaponInfo,
+		// Token: 0x04002D6D RID: 11629
+		DamageVignette,
+		// Token: 0x04002D6E RID: 11630
+		DamageDirectionInfo,
+		// Token: 0x04002D6F RID: 11631
+		Hitmarker,
+		// Token: 0x04002D70 RID: 11632
+		FlagCaptureProgress,
+		// Token: 0x04002D71 RID: 11633
+		OverlayText,
+		// Token: 0x04002D72 RID: 11634
+		KillFeed
+	}
+}

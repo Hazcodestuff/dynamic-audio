@@ -1,0 +1,283 @@
+using System;
+using Lua;
+using UnityEngine;
+
+// Token: 0x02000082 RID: 130
+public class ExplodingProjectile : Projectile
+{
+	// Token: 0x0600065B RID: 1627 RVA: 0x00027542 File Offset: 0x00025742
+	protected override void AssignArmorDamage()
+	{
+		this.armorDamage = Vehicle.ArmorRating.HeavyArms;
+	}
+
+	// Token: 0x0600065C RID: 1628 RVA: 0x0002754B File Offset: 0x0002574B
+	protected override void Awake()
+	{
+		base.Awake();
+		this.audioSource = base.GetComponent<AudioSource>();
+	}
+
+	// Token: 0x0600065D RID: 1629 RVA: 0x00027560 File Offset: 0x00025760
+	public override void StartTravelling()
+	{
+		base.StartTravelling();
+		base.enabled = true;
+		if (this.impactParticles != null)
+		{
+			this.impactParticles.Stop();
+		}
+		if (this.trailParticles != null)
+		{
+			this.trailParticles.Play();
+		}
+		Renderer[] array = this.renderers;
+		for (int i = 0; i < array.Length; i++)
+		{
+			array[i].enabled = true;
+		}
+	}
+
+	// Token: 0x0600065E RID: 1630 RVA: 0x000275CC File Offset: 0x000257CC
+	protected override Projectile.HitType Hit(Ray ray, RaycastHit hitInfo, out bool showHitIndicator)
+	{
+		bool flag;
+		Projectile.HitType hitType = base.Hit(ray, hitInfo, out flag);
+		bool flag2 = false;
+		if (hitType == Projectile.HitType.Stop || hitType == Projectile.HitType.StopNoDecal)
+		{
+			Vector3 position = hitInfo.point + hitInfo.normal * 0.3f;
+			base.transform.position = position;
+			flag2 = this.Explode(position, hitInfo.normal);
+		}
+		showHitIndicator = (flag || flag2);
+		return hitType;
+	}
+
+	// Token: 0x0600065F RID: 1631 RVA: 0x00027630 File Offset: 0x00025830
+	protected override bool Travel(Vector3 delta)
+	{
+		Ray ray = new Ray(base.transform.position + new Vector3(0f, 1.5f, 0f), delta.normalized);
+		RaycastHit raycastHit;
+		if (this.explodeAtWaterSurface && WaterLevel.Raycast(ray, out raycastHit, delta.magnitude))
+		{
+			this.OnWaterSurfaceDetonation(raycastHit.point);
+			return false;
+		}
+		return base.Travel(delta);
+	}
+
+	// Token: 0x06000660 RID: 1632 RVA: 0x0002769F File Offset: 0x0002589F
+	protected virtual bool OnWaterSurfaceDetonation(Vector3 enterPosition)
+	{
+		base.transform.position = enterPosition;
+		return this.Explode(enterPosition, Vector3.up);
+	}
+
+	// Token: 0x06000661 RID: 1633 RVA: 0x000276BC File Offset: 0x000258BC
+	protected virtual bool Explode(Vector3 position, Vector3 up)
+	{
+		bool reduceFriendlyDamage = this.firedByAI && this.travelDistance < 5f;
+		bool result = ActorManager.Explode(this.killCredit, this.sourceWeapon, position, this.explosionConfiguration, this.armorDamage, reduceFriendlyDamage);
+		base.transform.rotation = Quaternion.LookRotation(up);
+		base.enabled = false;
+		try
+		{
+			Renderer[] array = this.renderers;
+			for (int i = 0; i < array.Length; i++)
+			{
+				array[i].enabled = false;
+			}
+		}
+		catch (Exception e)
+		{
+			ModManager.HandleModException(e);
+		}
+		if (this.impactParticles != null)
+		{
+			this.impactParticles.Play();
+		}
+		if (this.trailParticles != null)
+		{
+			this.trailParticles.Stop();
+		}
+		if (this.audioSource != null)
+		{
+			Vector3 vector = position + up * 0.5f;
+			GameManager.UpdateSoundOutputGroupCombat(this.audioSource, Vector3.Distance(vector, GameManager.GetPlayerCameraPosition()), !Physics.Linecast(vector, GameManager.GetPlayerCameraPosition(), 8392705));
+			this.audioSource.pitch *= Random.Range(0.9f, 1.1f);
+			this.audioSource.Play();
+		}
+		if (this.activateOnExplosion != null)
+		{
+			this.activateOnExplosion.SetActive(true);
+			if (this.deactivateAgainTime > 0f)
+			{
+				base.Invoke("Deactivate", this.deactivateAgainTime);
+			}
+		}
+		base.Invoke("StopSmoke", this.smokeTime);
+		return result;
+	}
+
+	// Token: 0x06000662 RID: 1634 RVA: 0x00027848 File Offset: 0x00025A48
+	public override void StopScripted(bool silent)
+	{
+		if (silent)
+		{
+			this.Cleanup(false);
+			return;
+		}
+		this.Explode(base.transform.position, Vector3.up);
+	}
+
+	// Token: 0x06000663 RID: 1635 RVA: 0x0002786C File Offset: 0x00025A6C
+	private void Deactivate()
+	{
+		this.activateOnExplosion.SetActive(false);
+	}
+
+	// Token: 0x06000664 RID: 1636 RVA: 0x0002787A File Offset: 0x00025A7A
+	private void StopSmoke()
+	{
+		if (this.impactParticles != null)
+		{
+			this.impactParticles.Stop(true);
+		}
+		base.Invoke("CleanupDelayed", 5f);
+	}
+
+	// Token: 0x06000665 RID: 1637 RVA: 0x000278A6 File Offset: 0x00025AA6
+	protected override void Cleanup(bool hitSomething)
+	{
+		if (!hitSomething)
+		{
+			base.Cleanup(hitSomething);
+		}
+	}
+
+	// Token: 0x06000666 RID: 1638 RVA: 0x000278B2 File Offset: 0x00025AB2
+	private void CleanupDelayed()
+	{
+		base.Cleanup(false);
+	}
+
+	// Token: 0x040005B9 RID: 1465
+	public const float EXPLOSION_SOURCE_NORMAL_OFFSET = 0.3f;
+
+	// Token: 0x040005BA RID: 1466
+	private const float EXPLOSION_WATER_DEPTH = 1.5f;
+
+	// Token: 0x040005BB RID: 1467
+	private const float AI_MISFIRE_TRAVEL_DISTANCE_THRESHOLD = 5f;
+
+	// Token: 0x040005BC RID: 1468
+	private const float CLEANUP_TIME = 5f;
+
+	// Token: 0x040005BD RID: 1469
+	public ExplodingProjectile.ExplosionConfiguration explosionConfiguration;
+
+	// Token: 0x040005BE RID: 1470
+	public float smokeTime = 8f;
+
+	// Token: 0x040005BF RID: 1471
+	public Renderer[] renderers;
+
+	// Token: 0x040005C0 RID: 1472
+	public ParticleSystem trailParticles;
+
+	// Token: 0x040005C1 RID: 1473
+	public ParticleSystem impactParticles;
+
+	// Token: 0x040005C2 RID: 1474
+	public GameObject activateOnExplosion;
+
+	// Token: 0x040005C3 RID: 1475
+	public float deactivateAgainTime = -1f;
+
+	// Token: 0x040005C4 RID: 1476
+	public bool explodeAtWaterSurface = true;
+
+	// Token: 0x040005C5 RID: 1477
+	protected AudioSource audioSource;
+
+	// Token: 0x0200079E RID: 1950
+	[Serializable]
+	public class ExplosionConfiguration
+	{
+		// Token: 0x06004F18 RID: 20248 RVA: 0x00131160 File Offset: 0x0012F360
+		[Doc("Creates an explosion configuration with a linear falloff.[..] Typically useful for small size explosions.")]
+		public ExplodingProjectile.ExplosionConfiguration CreateLinearFalloff(float damage, float damageRange, float balanceDamage, float balanceDamageRange, float force)
+		{
+			AnimationCurve linearFalloffCurve = ActorManager.instance.linearFalloffCurve;
+			return new ExplodingProjectile.ExplosionConfiguration
+			{
+				damage = damage,
+				damageRange = damageRange,
+				balanceDamage = balanceDamage,
+				balanceRange = balanceDamageRange,
+				force = force,
+				damageFalloff = linearFalloffCurve,
+				balanceFalloff = linearFalloffCurve
+			};
+		}
+
+		// Token: 0x06004F19 RID: 20249 RVA: 0x001311B0 File Offset: 0x0012F3B0
+		[Doc("Creates an explosion configuration with sharp falloff.[..] Typically useful for large explosions, where the explosion should deal damage to but not neccessarily kill everyone in its range.")]
+		public ExplodingProjectile.ExplosionConfiguration CreateSharpFalloff(float damage, float damageRange, float balanceDamage, float balanceDamageRange, float force)
+		{
+			AnimationCurve sharpFalloffCurve = ActorManager.instance.sharpFalloffCurve;
+			return new ExplodingProjectile.ExplosionConfiguration
+			{
+				damage = damage,
+				damageRange = damageRange,
+				balanceDamage = balanceDamage,
+				balanceRange = balanceDamageRange,
+				force = force,
+				damageFalloff = sharpFalloffCurve,
+				balanceFalloff = sharpFalloffCurve
+			};
+		}
+
+		// Token: 0x06004F1A RID: 20250 RVA: 0x00131200 File Offset: 0x0012F400
+		[Doc("Creates an explosion configuration with smooth step falloff.[..] Typically useful for small size explosions with a sharp change from high to low damage at half range.")]
+		public ExplodingProjectile.ExplosionConfiguration CreateSmoothStepFalloff(float damage, float damageRange, float balanceDamage, float balanceDamageRange, float force)
+		{
+			AnimationCurve smoothStepFalloffCurve = ActorManager.instance.smoothStepFalloffCurve;
+			return new ExplodingProjectile.ExplosionConfiguration
+			{
+				damage = damage,
+				damageRange = damageRange,
+				balanceDamage = balanceDamage,
+				balanceRange = balanceDamageRange,
+				force = force,
+				damageFalloff = smoothStepFalloffCurve,
+				balanceFalloff = smoothStepFalloffCurve
+			};
+		}
+
+		// Token: 0x0400289B RID: 10395
+		public float damage = 300f;
+
+		// Token: 0x0400289C RID: 10396
+		public float balanceDamage = 300f;
+
+		// Token: 0x0400289D RID: 10397
+		public float infantryDamageMultiplier = 1f;
+
+		// Token: 0x0400289E RID: 10398
+		public float force = 500f;
+
+		// Token: 0x0400289F RID: 10399
+		public float damageRange = 6f;
+
+		// Token: 0x040028A0 RID: 10400
+		public AnimationCurve damageFalloff;
+
+		// Token: 0x040028A1 RID: 10401
+		public float balanceRange = 9f;
+
+		// Token: 0x040028A2 RID: 10402
+		public AnimationCurve balanceFalloff;
+	}
+}

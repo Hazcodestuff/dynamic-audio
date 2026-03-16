@@ -1,0 +1,677 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Token: 0x0200011C RID: 284
+public class SpawnPoint : MonoBehaviour
+{
+	// Token: 0x06000B3A RID: 2874 RVA: 0x000425BE File Offset: 0x000407BE
+	public void AddIncomingNeighbor(SpawnPoint spawn)
+	{
+		SpawnPoint.AddIfNotPresent<SpawnPoint>(this.incomingNeighbors, spawn);
+	}
+
+	// Token: 0x06000B3B RID: 2875 RVA: 0x000425CC File Offset: 0x000407CC
+	public void AddOutgoingNeighbor(SpawnPoint spawn)
+	{
+		SpawnPoint.AddIfNotPresent<SpawnPoint>(this.outgoingNeighbors, spawn);
+	}
+
+	// Token: 0x06000B3C RID: 2876 RVA: 0x000425DA File Offset: 0x000407DA
+	public void AddNeighbor(SpawnPoint spawn)
+	{
+		SpawnPoint.AddIfNotPresent<SpawnPoint>(this.allNeighbors, spawn);
+	}
+
+	// Token: 0x06000B3D RID: 2877 RVA: 0x000425E8 File Offset: 0x000407E8
+	private static void AddIfNotPresent<T>(List<T> list, T item)
+	{
+		if (!list.Contains(item))
+		{
+			list.Add(item);
+		}
+	}
+
+	// Token: 0x06000B3E RID: 2878 RVA: 0x000425FC File Offset: 0x000407FC
+	protected virtual void Awake()
+	{
+		if (this.spawnpointContainer != null)
+		{
+			foreach (Renderer renderer in this.spawnpointContainer.GetComponentsInChildren<Renderer>())
+			{
+				renderer.enabled = false;
+				RaycastHit raycastHit;
+				if (Physics.Raycast(new Ray(renderer.transform.position + Vector3.up * 0.5f, Vector3.down), out raycastHit, 3f, 1))
+				{
+					renderer.transform.position = raycastHit.point + Vector3.up * 0.5f;
+				}
+			}
+		}
+		this.sortedCoverPoints = new List<CoverPoint>();
+		this.turretSpawners = new List<TurretSpawner>();
+		this.vehicleSpawners = new List<VehicleSpawner>();
+		this.landingZones = new List<LandingZone>();
+	}
+
+	// Token: 0x06000B3F RID: 2879 RVA: 0x000426C9 File Offset: 0x000408C9
+	public virtual void OnNavmeshReady()
+	{
+	}
+
+	// Token: 0x06000B40 RID: 2880 RVA: 0x000426CC File Offset: 0x000408CC
+	protected virtual void Start()
+	{
+		if (OrderManager.instance)
+		{
+			this.squadOrderPoint = OrderManager.CreateOrderPoint(base.transform, SquadOrderPoint.ObjectiveType.Attack, OrderManager.instance.pointOrderFlagTexture);
+			this.squadOrderPoint.targetText = this.shortName;
+			this.squadOrderPoint.transform.position += Vector3.up;
+			this.squadOrderPoint.maxIssueDistance = 400f;
+		}
+	}
+
+	// Token: 0x06000B41 RID: 2881 RVA: 0x00042742 File Offset: 0x00040942
+	public void FindNearbyStuff()
+	{
+		this.FindVehicleSpawners();
+		this.FindTurrets();
+	}
+
+	// Token: 0x06000B42 RID: 2882 RVA: 0x00042750 File Offset: 0x00040950
+	public void SetGhost(bool isGhost)
+	{
+		this.isGhostSpawn = isGhost;
+		MinimapUi.UpdateSpawnPointButton(this);
+	}
+
+	// Token: 0x06000B43 RID: 2883 RVA: 0x0004275F File Offset: 0x0004095F
+	public bool HasAnyHelicopterLandingZone()
+	{
+		return this.finalLandingZones.Length != 0;
+	}
+
+	// Token: 0x06000B44 RID: 2884 RVA: 0x0004276C File Offset: 0x0004096C
+	public void CollectHelicopterLandingZones()
+	{
+		if (this.helicopterLandingZones != null && this.helicopterLandingZones.Length != 0)
+		{
+			this.finalLandingZones = new HelicopterLandingZone[this.helicopterLandingZones.Length];
+			for (int i = 0; i < this.helicopterLandingZones.Length; i++)
+			{
+				this.finalLandingZones[i] = new HelicopterLandingZone
+				{
+					position = this.helicopterLandingZones[i].position
+				};
+			}
+			return;
+		}
+		Vector3 position;
+		if (PathfindingManager.instance.TryGenerateSpawnPointLandingZone(this, out position))
+		{
+			this.finalLandingZones = new HelicopterLandingZone[1];
+			this.finalLandingZones[0].position = position;
+			return;
+		}
+		this.finalLandingZones = new HelicopterLandingZone[0];
+	}
+
+	// Token: 0x06000B45 RID: 2885 RVA: 0x00042814 File Offset: 0x00040A14
+	public IEnumerable<HelicopterLandingZone> GetAllHelicopterLandingZones()
+	{
+		foreach (HelicopterLandingZone helicopterLandingZone in this.finalLandingZones)
+		{
+			yield return helicopterLandingZone;
+		}
+		HelicopterLandingZone[] array = null;
+		yield break;
+	}
+
+	// Token: 0x06000B46 RID: 2886 RVA: 0x00042824 File Offset: 0x00040A24
+	public HelicopterLandingZone GetRandomHelicopterLandingZone()
+	{
+		return this.finalLandingZones[Random.Range(0, this.finalLandingZones.Length)];
+	}
+
+	// Token: 0x06000B47 RID: 2887 RVA: 0x00042840 File Offset: 0x00040A40
+	public void FindCoverPoints()
+	{
+		foreach (CoverPoint coverPoint in CoverManager.instance.coverPoints)
+		{
+			if (Vector3.Distance(base.transform.position, coverPoint.transform.position) < this.protectRange)
+			{
+				this.sortedCoverPoints.Add(coverPoint);
+			}
+		}
+		this.effectiveSortedCoverAgainstNeighbor = new Dictionary<SpawnPoint, List<CoverPoint>>();
+		foreach (SpawnPoint key in this.incomingNeighbors)
+		{
+			this.effectiveSortedCoverAgainstNeighbor.Add(key, new List<CoverPoint>());
+		}
+		foreach (CoverPoint coverPoint2 in this.sortedCoverPoints)
+		{
+			if (coverPoint2.coverage >= 10)
+			{
+				foreach (SpawnPoint spawnPoint in this.incomingNeighbors)
+				{
+					if (coverPoint2.CoversPoint(spawnPoint.transform.position))
+					{
+						bool flag = coverPoint2.CoversPoint(base.transform.position);
+						if (coverPoint2.coverage > 100 || !flag)
+						{
+							this.effectiveSortedCoverAgainstNeighbor[spawnPoint].Add(coverPoint2);
+						}
+					}
+				}
+			}
+		}
+		foreach (SpawnPoint key2 in this.incomingNeighbors)
+		{
+			this.effectiveSortedCoverAgainstNeighbor[key2].Sort(new Comparison<CoverPoint>(SpawnPoint.SortCoverPointByCoverageDescending));
+		}
+		this.sortedCoverPoints.Sort(new Comparison<CoverPoint>(SpawnPoint.SortCoverPointByCoverageDescending));
+	}
+
+	// Token: 0x06000B48 RID: 2888 RVA: 0x00042A40 File Offset: 0x00040C40
+	private static int SortCoverPointByCoverageDescending(CoverPoint x, CoverPoint y)
+	{
+		return y.coverage.CompareTo(x.coverage);
+	}
+
+	// Token: 0x06000B49 RID: 2889 RVA: 0x00042A54 File Offset: 0x00040C54
+	public CoverPoint GetAvailableCoverPoint()
+	{
+		int num = Random.Range(0, this.incomingNeighbors.Count);
+		for (int i = 0; i < this.incomingNeighbors.Count; i++)
+		{
+			int index = (num + i) % this.incomingNeighbors.Count;
+			SpawnPoint spawnPoint = this.incomingNeighbors[index];
+			if (spawnPoint.owner != -1 && spawnPoint.owner != this.owner)
+			{
+				foreach (CoverPoint coverPoint in this.effectiveSortedCoverAgainstNeighbor[spawnPoint])
+				{
+					if (coverPoint.CanBeUsed())
+					{
+						return coverPoint;
+					}
+				}
+			}
+		}
+		foreach (CoverPoint coverPoint2 in this.sortedCoverPoints)
+		{
+			if (coverPoint2.CanBeUsed())
+			{
+				return coverPoint2;
+			}
+		}
+		return null;
+	}
+
+	// Token: 0x06000B4A RID: 2890 RVA: 0x00042B68 File Offset: 0x00040D68
+	private void FindVehicleSpawners()
+	{
+		foreach (VehicleSpawner vehicleSpawner in Object.FindObjectsOfType<VehicleSpawner>())
+		{
+			if (vehicleSpawner.enabled && vehicleSpawner.spawnPoint == null && Vector3.Distance(base.transform.position, vehicleSpawner.transform.position) < this.protectRange)
+			{
+				vehicleSpawner.spawnPoint = this;
+				this.vehicleSpawners.Add(vehicleSpawner);
+				if (vehicleSpawner.VehiclePrefabIsAircraft())
+				{
+					this.hasAircraft = true;
+				}
+				if (vehicleSpawner.VehiclePrefabIsWatercraft())
+				{
+					this.hasWatercraft = true;
+				}
+			}
+		}
+		this.vehicleSpawners.Sort((VehicleSpawner x, VehicleSpawner y) => y.priority.CompareTo(x.priority));
+	}
+
+	// Token: 0x06000B4B RID: 2891 RVA: 0x00042C24 File Offset: 0x00040E24
+	public Vehicle GetAvailableVehicle(VehicleFilter filter, int passengers = -1)
+	{
+		byte b;
+		return this.GetAvailableVehicle(filter, out b, passengers);
+	}
+
+	// Token: 0x06000B4C RID: 2892 RVA: 0x00042C3C File Offset: 0x00040E3C
+	public Vehicle GetAvailableVehicle(VehicleFilter filter, out byte priority, int passengers = -1)
+	{
+		priority = 0;
+		foreach (VehicleSpawner vehicleSpawner in this.vehicleSpawners)
+		{
+			if (vehicleSpawner.HasAvailableVehicle() && filter.VehiclePassesFilter(vehicleSpawner.lastSpawnedVehicle) && (passengers == -1 || (vehicleSpawner.lastSpawnedVehicle.EmptySeats() >= passengers && vehicleSpawner.lastSpawnedVehicle.minCrewCount <= passengers)))
+			{
+				priority = vehicleSpawner.priority;
+				return vehicleSpawner.lastSpawnedVehicle;
+			}
+		}
+		return null;
+	}
+
+	// Token: 0x06000B4D RID: 2893 RVA: 0x00042CD8 File Offset: 0x00040ED8
+	public Vehicle GetAvailableRoamingVehicle()
+	{
+		foreach (VehicleSpawner vehicleSpawner in this.vehicleSpawners)
+		{
+			if (vehicleSpawner.HasAvailableRoamingVehicle())
+			{
+				return vehicleSpawner.lastSpawnedVehicle;
+			}
+		}
+		return null;
+	}
+
+	// Token: 0x06000B4E RID: 2894 RVA: 0x00042D38 File Offset: 0x00040F38
+	public void FindTurrets()
+	{
+		foreach (TurretSpawner turretSpawner in Object.FindObjectsOfType<TurretSpawner>())
+		{
+			if (turretSpawner.enabled && !turretSpawner.HasAssignedSpawn() && Vector3.Distance(base.transform.position, turretSpawner.transform.position) < this.protectRange)
+			{
+				this.turretSpawners.Add(turretSpawner);
+				turretSpawner.spawnPoint = this;
+			}
+		}
+	}
+
+	// Token: 0x06000B4F RID: 2895 RVA: 0x00042DA4 File Offset: 0x00040FA4
+	public bool IsValidDefenseTurret(Vehicle vehicle)
+	{
+		foreach (TurretSpawner turretSpawner in this.turretSpawners)
+		{
+			if (turretSpawner.spawnedTurret[0] == vehicle || turretSpawner.spawnedTurret[1] == vehicle)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Token: 0x06000B50 RID: 2896 RVA: 0x00042E18 File Offset: 0x00041018
+	public bool HasAnyAvailableTurrets()
+	{
+		foreach (TurretSpawner turretSpawner in this.turretSpawners)
+		{
+			Vehicle activeTurret = turretSpawner.GetActiveTurret();
+			if (activeTurret != null && !activeTurret.dead && !activeTurret.IsFull() && !activeTurret.AllSeatsReserved())
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Token: 0x06000B51 RID: 2897 RVA: 0x00042E94 File Offset: 0x00041094
+	public Vehicle GetAvailableTurret()
+	{
+		foreach (TurretSpawner turretSpawner in this.turretSpawners)
+		{
+			if (this.defenseStrategy == SpawnPoint.DefenseStrategy.AlwaysManTurrets || turretSpawner.typeToSpawn == TurretSpawner.TurretSpawnType.AntiAir || this.TransformFacesEnemySpawn(turretSpawner.transform))
+			{
+				Vehicle activeTurret = turretSpawner.GetActiveTurret();
+				if (activeTurret != null && !activeTurret.dead && !activeTurret.IsFull() && !activeTurret.AllSeatsReserved())
+				{
+					return activeTurret;
+				}
+			}
+		}
+		return null;
+	}
+
+	// Token: 0x06000B52 RID: 2898 RVA: 0x00042F30 File Offset: 0x00041130
+	public bool TransformFacesEnemySpawn(Transform transform)
+	{
+		Matrix4x4 worldToLocalMatrix = transform.worldToLocalMatrix;
+		foreach (SpawnPoint spawnPoint in ActorManager.instance.spawnPoints)
+		{
+			if (spawnPoint.owner != this.owner && worldToLocalMatrix.MultiplyPoint(spawnPoint.transform.position).z > 0f)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Token: 0x06000B53 RID: 2899 RVA: 0x00042F90 File Offset: 0x00041190
+	public virtual Vector3 GetSpawnPosition()
+	{
+		return this.RandomSpawnPointPosition(this.spawnpointContainer);
+	}
+
+	// Token: 0x06000B54 RID: 2900 RVA: 0x00042FA0 File Offset: 0x000411A0
+	public Vector3 GenerateRandomSpawnPosition()
+	{
+		Vector3 vector = base.transform.position + Vector3.Scale(Random.insideUnitSphere, new Vector3(3f, 0f, 3f));
+		RaycastHit raycastHit;
+		if (Physics.Raycast(new Ray(vector + Vector3.up * 3f, Vector3.down), out raycastHit))
+		{
+			return raycastHit.point;
+		}
+		return vector;
+	}
+
+	// Token: 0x06000B55 RID: 2901 RVA: 0x00043010 File Offset: 0x00041210
+	public virtual Vector3 RandomPositionInCaptureZone()
+	{
+		Vector2 vector = Random.insideUnitCircle * 20f;
+		Vector3 vector2 = base.transform.position + new Vector3(vector.x, 0f, vector.y);
+		RaycastHit raycastHit;
+		if (Physics.Raycast(new Ray(vector2 + Vector3.up * 3f, Vector3.down), out raycastHit))
+		{
+			return raycastHit.point;
+		}
+		return vector2;
+	}
+
+	// Token: 0x06000B56 RID: 2902 RVA: 0x00043085 File Offset: 0x00041285
+	public int GetNSpawnPoints(Transform container)
+	{
+		if (container == null)
+		{
+			return 0;
+		}
+		return container.childCount;
+	}
+
+	// Token: 0x06000B57 RID: 2903 RVA: 0x00043098 File Offset: 0x00041298
+	public Vector3 RandomSpawnPointPosition(Transform container)
+	{
+		int nspawnPoints = this.GetNSpawnPoints(container);
+		if (nspawnPoints == 0)
+		{
+			return this.GenerateRandomSpawnPosition();
+		}
+		return container.GetChild(Random.Range(0, nspawnPoints)).position;
+	}
+
+	// Token: 0x06000B58 RID: 2904 RVA: 0x000430C9 File Offset: 0x000412C9
+	public virtual Vector3 RandomPatrolPosition()
+	{
+		if (this.spawnpointContainer != null)
+		{
+			return this.RandomSpawnPointPosition(this.spawnpointContainer);
+		}
+		return this.RandomPositionInCaptureZone();
+	}
+
+	// Token: 0x06000B59 RID: 2905 RVA: 0x000430EC File Offset: 0x000412EC
+	public virtual bool IsSafe()
+	{
+		return true;
+	}
+
+	// Token: 0x06000B5A RID: 2906 RVA: 0x000430F0 File Offset: 0x000412F0
+	public virtual void SetOwner(int team, bool initialOwner = false)
+	{
+		int num = this.owner;
+		this.owner = team;
+		if (!initialOwner)
+		{
+			OrderManager.NewOwnerOfSpawn(this);
+		}
+		BattlePlanUi.UpdateTacticsPointColor(this);
+		bool flag = team == GameManager.PlayerTeam();
+		this.squadOrderPoint.type = (flag ? SquadOrderPoint.ObjectiveType.Defend : SquadOrderPoint.ObjectiveType.Attack);
+		if (this.captureAnimation != null && this.captureAnimation.animators != null)
+		{
+			foreach (Animation animation in this.captureAnimation.animators)
+			{
+				if (team == 0 && !string.IsNullOrEmpty(this.captureAnimation.blueCapturedAnimation))
+				{
+					animation.Play(this.captureAnimation.blueCapturedAnimation);
+				}
+				else if (team == 1 && !string.IsNullOrEmpty(this.captureAnimation.redCapturedAnimation))
+				{
+					animation.Play(this.captureAnimation.redCapturedAnimation);
+				}
+				else if (team == -1 && !string.IsNullOrEmpty(this.captureAnimation.neutralCapturedAnimation))
+				{
+					animation.Play(this.captureAnimation.neutralCapturedAnimation);
+				}
+			}
+		}
+		if (this.refreshTurretsOnCaptured && (team == 0 || team == 1))
+		{
+			foreach (TurretSpawner turretSpawner in this.turretSpawners)
+			{
+				turretSpawner.ActivateTurret(team);
+			}
+		}
+	}
+
+	// Token: 0x06000B5B RID: 2907 RVA: 0x00043244 File Offset: 0x00041444
+	public virtual bool IsFrontLine()
+	{
+		using (List<SpawnPoint>.Enumerator enumerator = this.allNeighbors.GetEnumerator())
+		{
+			while (enumerator.MoveNext())
+			{
+				if (enumerator.Current.owner != this.owner)
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	// Token: 0x06000B5C RID: 2908 RVA: 0x000432A4 File Offset: 0x000414A4
+	public void AddLandingZone(LandingZone lz)
+	{
+		this.landingZones.Add(lz);
+	}
+
+	// Token: 0x06000B5D RID: 2909 RVA: 0x000432B2 File Offset: 0x000414B2
+	public virtual bool IsInsideCaptureVolume(Vector3 position)
+	{
+		return false;
+	}
+
+	// Token: 0x06000B5E RID: 2910 RVA: 0x000432B5 File Offset: 0x000414B5
+	public virtual float GetCaptureRange()
+	{
+		return 0f;
+	}
+
+	// Token: 0x06000B5F RID: 2911 RVA: 0x000432BC File Offset: 0x000414BC
+	public bool IsInsideProtectRange(Vector3 position)
+	{
+		Vector3 vector = position - base.transform.position;
+		vector.y = 0f;
+		return vector.magnitude < this.protectRange;
+	}
+
+	// Token: 0x06000B60 RID: 2912 RVA: 0x000432F6 File Offset: 0x000414F6
+	public virtual bool IsInsideTransportDropRange(Vector3 position)
+	{
+		return this.IsInsideProtectRange(position);
+	}
+
+	// Token: 0x06000B61 RID: 2913 RVA: 0x000432FF File Offset: 0x000414FF
+	public uint GetClosestNavmeshArea(PathfindingBox.Type type)
+	{
+		if (type == PathfindingBox.Type.Boat)
+		{
+			return this.closestBoatNavmeshArea;
+		}
+		if (type == PathfindingBox.Type.Car)
+		{
+			return this.closestCarNavmeshArea;
+		}
+		return this.closestInfantryNavmeshArea;
+	}
+
+	// Token: 0x06000B62 RID: 2914 RVA: 0x0004331D File Offset: 0x0004151D
+	public bool IsNeighborTo(SpawnPoint other)
+	{
+		return this.allNeighbors.Contains(other);
+	}
+
+	// Token: 0x06000B63 RID: 2915 RVA: 0x0004332B File Offset: 0x0004152B
+	public virtual void OnAnySpawnContainerChanged()
+	{
+	}
+
+	// Token: 0x06000B64 RID: 2916 RVA: 0x00043330 File Offset: 0x00041530
+	internal void SetHelicopterLZBaseIndex(int baseIndex)
+	{
+		for (int i = 0; i < this.finalLandingZones.Length; i++)
+		{
+			this.finalLandingZones[i].index = baseIndex + i;
+		}
+	}
+
+	// Token: 0x04000B11 RID: 2833
+	public SpawnPoint.Team defaultOwner = SpawnPoint.Team.Neutral;
+
+	// Token: 0x04000B12 RID: 2834
+	private const float MAX_SQUAD_ORDER_POINT_ISSUE_DISTANCE = 400f;
+
+	// Token: 0x04000B13 RID: 2835
+	[NonSerialized]
+	public int owner = -1;
+
+	// Token: 0x04000B14 RID: 2836
+	[NonSerialized]
+	public List<SpawnPoint> allNeighbors;
+
+	// Token: 0x04000B15 RID: 2837
+	[NonSerialized]
+	public List<SpawnPoint> outgoingNeighbors;
+
+	// Token: 0x04000B16 RID: 2838
+	[NonSerialized]
+	public List<SpawnPoint> incomingNeighbors;
+
+	// Token: 0x04000B17 RID: 2839
+	public Transform spawnpointContainer;
+
+	// Token: 0x04000B18 RID: 2840
+	public float protectRange = 60f;
+
+	// Token: 0x04000B19 RID: 2841
+	public SpawnPoint.DefenseStrategy defenseStrategy;
+
+	// Token: 0x04000B1A RID: 2842
+	public VehicleFilter vehicleFilter;
+
+	// Token: 0x04000B1B RID: 2843
+	public string shortName = "SPAWN";
+
+	// Token: 0x04000B1C RID: 2844
+	public bool isRelevantPathfindingPoint = true;
+
+	// Token: 0x04000B1D RID: 2845
+	public SpawnPoint.CaptureAnimation captureAnimation;
+
+	// Token: 0x04000B1E RID: 2846
+	public Transform[] helicopterLandingZones;
+
+	// Token: 0x04000B1F RID: 2847
+	private Dictionary<SpawnPoint, List<CoverPoint>> effectiveSortedCoverAgainstNeighbor;
+
+	// Token: 0x04000B20 RID: 2848
+	[NonSerialized]
+	public List<CoverPoint> sortedCoverPoints;
+
+	// Token: 0x04000B21 RID: 2849
+	[NonSerialized]
+	public List<TurretSpawner> turretSpawners;
+
+	// Token: 0x04000B22 RID: 2850
+	[NonSerialized]
+	public List<VehicleSpawner> vehicleSpawners;
+
+	// Token: 0x04000B23 RID: 2851
+	[NonSerialized]
+	public List<LandingZone> landingZones;
+
+	// Token: 0x04000B24 RID: 2852
+	[NonSerialized]
+	public uint closestInfantryNavmeshArea = uint.MaxValue;
+
+	// Token: 0x04000B25 RID: 2853
+	[NonSerialized]
+	public uint closestCarNavmeshArea = uint.MaxValue;
+
+	// Token: 0x04000B26 RID: 2854
+	[NonSerialized]
+	public uint closestBoatNavmeshArea = uint.MaxValue;
+
+	// Token: 0x04000B27 RID: 2855
+	[NonSerialized]
+	public bool hasWatercraft;
+
+	// Token: 0x04000B28 RID: 2856
+	[NonSerialized]
+	public bool hasAircraft;
+
+	// Token: 0x04000B29 RID: 2857
+	[NonSerialized]
+	public bool refreshTurretsOnCaptured = true;
+
+	// Token: 0x04000B2A RID: 2858
+	[NonSerialized]
+	public int nAirConnections;
+
+	// Token: 0x04000B2B RID: 2859
+	[NonSerialized]
+	public int nLandConnections;
+
+	// Token: 0x04000B2C RID: 2860
+	[NonSerialized]
+	public int nWaterConnections;
+
+	// Token: 0x04000B2D RID: 2861
+	protected SquadOrderPoint squadOrderPoint;
+
+	// Token: 0x04000B2E RID: 2862
+	private HelicopterLandingZone[] finalLandingZones;
+
+	// Token: 0x04000B2F RID: 2863
+	[NonSerialized]
+	public bool isGhostSpawn;
+
+	// Token: 0x02000815 RID: 2069
+	public enum DefenseStrategy
+	{
+		// Token: 0x04002AF0 RID: 10992
+		Default,
+		// Token: 0x04002AF1 RID: 10993
+		NeverAutoDefend,
+		// Token: 0x04002AF2 RID: 10994
+		AlwaysAutoDefend,
+		// Token: 0x04002AF3 RID: 10995
+		AlwaysManTurrets
+	}
+
+	// Token: 0x02000816 RID: 2070
+	public enum Team
+	{
+		// Token: 0x04002AF5 RID: 10997
+		Neutral = -1,
+		// Token: 0x04002AF6 RID: 10998
+		Blue,
+		// Token: 0x04002AF7 RID: 10999
+		Red
+	}
+
+	// Token: 0x02000817 RID: 2071
+	[Serializable]
+	public class CaptureAnimation
+	{
+		// Token: 0x04002AF8 RID: 11000
+		public Animation[] animators;
+
+		// Token: 0x04002AF9 RID: 11001
+		public string neutralCapturedAnimation;
+
+		// Token: 0x04002AFA RID: 11002
+		public string blueCapturedAnimation;
+
+		// Token: 0x04002AFB RID: 11003
+		public string redCapturedAnimation;
+	}
+}

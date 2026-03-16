@@ -1,0 +1,608 @@
+using System;
+using UnityEngine;
+
+// Token: 0x0200008E RID: 142
+public class Projectile : MonoBehaviour
+{
+	// Token: 0x060006B9 RID: 1721 RVA: 0x00029158 File Offset: 0x00027358
+	protected virtual void AssignArmorDamage()
+	{
+		this.armorDamage = Vehicle.ArmorRating.SmallArms;
+	}
+
+	// Token: 0x060006BA RID: 1722 RVA: 0x00029161 File Offset: 0x00027361
+	public virtual void OnReturnedToPool()
+	{
+	}
+
+	// Token: 0x060006BB RID: 1723 RVA: 0x00029163 File Offset: 0x00027363
+	protected virtual void Awake()
+	{
+		this.trailRenderer = base.GetComponentInChildren<TrailRenderer>();
+		if (this.trailRenderer != null)
+		{
+			this.trailRenderer.autodestruct = false;
+		}
+		if (this.autoAssignArmorDamage)
+		{
+			this.AssignArmorDamage();
+		}
+	}
+
+	// Token: 0x060006BC RID: 1724 RVA: 0x0002919C File Offset: 0x0002739C
+	private void Start()
+	{
+		try
+		{
+			if (this.sourceWeapon == null)
+			{
+				this.StartTravelling();
+			}
+		}
+		catch (Exception)
+		{
+		}
+	}
+
+	// Token: 0x060006BD RID: 1725 RVA: 0x000291D4 File Offset: 0x000273D4
+	public virtual void ResetFields()
+	{
+		this.performInfantryInitialMuzzleTravel = false;
+		this.initialMuzzleTravelDistance = 0f;
+		this.travelDistance = 0f;
+	}
+
+	// Token: 0x060006BE RID: 1726 RVA: 0x000291F4 File Offset: 0x000273F4
+	public virtual void StartTravelling()
+	{
+		if (this.killCredit != null)
+		{
+			this.ownerTeam = this.killCredit.team;
+			this.firedByAI = this.killCredit.aiControlled;
+			this.firedByPlayer = !this.firedByAI;
+			this.ignoresInitialGeometry = (this.firedByAI && (this.killCredit.controller.IsInCover() || this is TargetSeekingMissile));
+		}
+		else
+		{
+			this.ownerTeam = -1;
+			this.firedByAI = false;
+			this.firedByPlayer = false;
+			this.ignoresInitialGeometry = false;
+		}
+		if (this.trailRenderer != null)
+		{
+			this.trailRenderer.Clear();
+		}
+		this.velocity = base.transform.forward * this.configuration.speed;
+		if (this.configuration.inheritVelocity && this.killCredit != null)
+		{
+			this.velocity += this.killCredit.Velocity();
+		}
+		this.expireTime = Time.time + this.configuration.lifetime;
+		if (this.killCredit != null && this.killCredit.aiControlled)
+		{
+			this.hitMask = (this.configuration.passThroughPenetrateLayer ? -31590917 : -29493765);
+		}
+		else
+		{
+			this.hitMask = (this.configuration.passThroughPenetrateLayer ? -31853061 : -29755909);
+		}
+		ActorManager.RegisterProjectile(this);
+	}
+
+	// Token: 0x060006BF RID: 1727 RVA: 0x00029378 File Offset: 0x00027578
+	protected virtual void Update()
+	{
+		try
+		{
+			if (Time.time > this.expireTime)
+			{
+				this.Cleanup(false);
+			}
+			else
+			{
+				Vector3 position = base.transform.position;
+				this.UpdatePosition();
+				if (!this.firedByPlayer && this.configuration.makesFlybySound)
+				{
+					Vector3 vector = ActorManager.instance.player.Position();
+					Vector3 lhs = base.transform.position - vector;
+					bool flag = this.travellingTowardsPlayer;
+					this.travellingTowardsPlayer = (Vector3.Dot(lhs, this.velocity) < 0f);
+					if (!this.travellingTowardsPlayer && flag && (!ActorManager.instance.player.IsSeated() || this.armorDamage >= ActorManager.instance.player.seat.vehicle.armorDamagedBy))
+					{
+						Vector3 vector2 = SMath.LineVsPointClosest(position, base.transform.position, vector);
+						if (Vector3.Distance(vector2, vector) < 15f)
+						{
+							LocalPlayer.controller.BulletFlyby(vector2, Random.Range(this.configuration.flybyPitch, 0.9f * this.configuration.flybyPitch));
+						}
+					}
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			ModManager.HandleModException(e);
+		}
+	}
+
+	// Token: 0x060006C0 RID: 1728 RVA: 0x000294C4 File Offset: 0x000276C4
+	protected virtual void UpdatePosition()
+	{
+		if (this.performInfantryInitialMuzzleTravel)
+		{
+			this.performInfantryInitialMuzzleTravel = false;
+			Vector3 vector = this.initialMuzzleTravelDistance * base.transform.forward;
+			base.transform.position -= vector;
+			if (!this.Travel(vector))
+			{
+				return;
+			}
+		}
+		this.velocity += Physics.gravity * this.configuration.gravityMultiplier * Time.deltaTime;
+		Vector3 delta = this.velocity * Time.deltaTime;
+		this.Travel(delta);
+		this.travelDistance += delta.magnitude;
+	}
+
+	// Token: 0x060006C1 RID: 1729 RVA: 0x00029578 File Offset: 0x00027778
+	protected virtual bool Travel(Vector3 delta)
+	{
+		Ray ray = new Ray(base.transform.position, delta.normalized);
+		RaycastHit hitInfo;
+		if (WaterLevel.Raycast(ray, out hitInfo, delta.magnitude))
+		{
+			GameManager.CreateSplashEffect(false, hitInfo.point);
+		}
+		if (this.ProjectileRaycast(ray, out hitInfo, delta.magnitude * 2f, this.hitMask))
+		{
+			bool flag;
+			Projectile.HitType hitType = this.Hit(ray, hitInfo, out flag);
+			if (hitType == Projectile.HitType.Stop)
+			{
+				if ((1 << hitInfo.collider.gameObject.layer & 32769) != 0 && hitInfo.rigidbody == null)
+				{
+					this.SpawnDecal(hitInfo);
+				}
+				return false;
+			}
+			if (hitType == Projectile.HitType.StopNoDecal)
+			{
+				return false;
+			}
+			if (hitType == Projectile.HitType.Stutter)
+			{
+				base.transform.position = hitInfo.point + this.velocity.normalized * 0.01f;
+				return true;
+			}
+		}
+		base.transform.position += delta;
+		if (delta != Vector3.zero)
+		{
+			base.transform.rotation = Quaternion.LookRotation(delta);
+		}
+		return true;
+	}
+
+	// Token: 0x060006C2 RID: 1730 RVA: 0x00029690 File Offset: 0x00027890
+	public bool ProjectileRaycast(Ray ray, out RaycastHit hitInfo, float distance, int mask)
+	{
+		hitInfo = default(RaycastHit);
+		int num = Physics.RaycastNonAlloc(ray, Projectile.RAYCAST_RESULTS, distance, mask);
+		bool result = false;
+		float num2 = distance;
+		for (int i = 0; i < num; i++)
+		{
+			RaycastHit raycastHit = Projectile.RAYCAST_RESULTS[i];
+			Collider collider = raycastHit.collider;
+			if (collider != null && raycastHit.distance < num2)
+			{
+				if (this.killCredit != null)
+				{
+					if (Hitbox.IsHitboxLayer(collider.gameObject.layer))
+					{
+						Hitbox component = collider.GetComponent<Hitbox>();
+						if (!this.CanHitHitbox(component, this.travelDistance + raycastHit.distance))
+						{
+							goto IL_FC;
+						}
+					}
+					else if (collider.gameObject.layer == 12)
+					{
+						Vehicle componentInParent = collider.GetComponentInParent<Vehicle>();
+						if (componentInParent != null && !componentInParent.canFireAtOwnVehicle && this.killCredit.IsSeated() && this.killCredit.seat.vehicle == componentInParent)
+						{
+							goto IL_FC;
+						}
+					}
+				}
+				hitInfo = raycastHit;
+				num2 = raycastHit.distance;
+				result = true;
+			}
+			IL_FC:;
+		}
+		return result;
+	}
+
+	// Token: 0x060006C3 RID: 1731 RVA: 0x000297A5 File Offset: 0x000279A5
+	private bool CanHitHitbox(Hitbox hitbox, float travelDistance)
+	{
+		return ((!this.firedByAI && travelDistance > 2f) || hitbox.team != this.ownerTeam) && hitbox.parent != this.killCredit;
+	}
+
+	// Token: 0x060006C4 RID: 1732 RVA: 0x000297E0 File Offset: 0x000279E0
+	protected virtual Projectile.HitType Hit(Ray ray, RaycastHit hitInfo, out bool showHitIndicator)
+	{
+		showHitIndicator = false;
+		Projectile.HitType result;
+		try
+		{
+			if (this.configuration.piercing && hitInfo.collider.CompareTag("Piercable"))
+			{
+				Collider collider = hitInfo.collider;
+				collider.enabled = false;
+				RaycastHit raycastHit;
+				if (Physics.Raycast(new Ray(hitInfo.point, ray.direction), out raycastHit, 5f, this.hitMask))
+				{
+					hitInfo = raycastHit;
+				}
+				collider.enabled = true;
+			}
+			Destructible component = hitInfo.collider.GetComponent<Destructible>();
+			bool flag = component is VehicleDestructibleHitbox;
+			if (component != null && this.DealDamageOnHit())
+			{
+				Projectile.HitDestructibleResult hitDestructibleResult = this.OnHitDestructible(component);
+				if (hitDestructibleResult == Projectile.HitDestructibleResult.HitIndicator)
+				{
+					showHitIndicator = true;
+				}
+				else if (hitDestructibleResult == Projectile.HitDestructibleResult.Stutter)
+				{
+					return Projectile.HitType.Stutter;
+				}
+			}
+			bool flag2 = component == null && hitInfo.collider.attachedRigidbody == null;
+			if (Hitbox.IsHitboxLayer(hitInfo.collider.gameObject.layer))
+			{
+				Hitbox component2 = hitInfo.collider.GetComponent<Hitbox>();
+				Hurtable parent = component2.parent;
+				if (this.killCredit != null)
+				{
+					bool flag3 = !this.killCredit.aiControlled;
+				}
+				if (this.DealDamageOnHit())
+				{
+					showHitIndicator = component2.ProjectileHit(this, hitInfo.point);
+				}
+			}
+			bool flag4 = false;
+			bool flag5 = false;
+			if (!flag && 12 == hitInfo.collider.gameObject.layer)
+			{
+				Vehicle componentInParent = hitInfo.collider.GetComponentInParent<Vehicle>();
+				if (componentInParent == null)
+				{
+					this.Cleanup(true);
+					return Projectile.HitType.StopNoDecal;
+				}
+				flag5 = true;
+				flag4 = componentInParent.AnySeatsTaken();
+				if (componentInParent.IsDamagedByRating(this.armorDamage))
+				{
+					showHitIndicator = !componentInParent.dead;
+					if (this.DealDamageOnHit())
+					{
+						DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.Projectile, this.killCredit, this.sourceWeapon)
+						{
+							healthDamage = this.Damage() * componentInParent.GetDamageMultiplier(this.armorDamage)
+						};
+						componentInParent.Damage(info);
+					}
+				}
+			}
+			Rigidbody attachedRigidbody = hitInfo.collider.attachedRigidbody;
+			if (attachedRigidbody != null)
+			{
+				if (!flag5)
+				{
+					Vector3 force = this.velocity.normalized * this.configuration.impactForce;
+					attachedRigidbody.AddForceAtPosition(force, hitInfo.point, ForceMode.Impulse);
+				}
+				else if (this.configuration.impactForce > 300f)
+				{
+					float num = this.configuration.impactForce - 300f;
+					if (flag4)
+					{
+						num *= 0.2f;
+					}
+					Vector3 force2 = this.velocity.normalized * num;
+					attachedRigidbody.AddForceAtPosition(force2, hitInfo.point, ForceMode.Impulse);
+				}
+			}
+			if (this.ignoresInitialGeometry && this.travelDistance + hitInfo.distance < 1.5f)
+			{
+				result = Projectile.HitType.Stutter;
+			}
+			else
+			{
+				if (!this.firedByPlayer && this.configuration.makesFlybySound && this.travellingTowardsPlayer && Vector3.Distance(hitInfo.point, ActorManager.instance.player.Position()) < 15f)
+				{
+					LocalPlayer.controller.BulletFlyby(hitInfo.point, this.configuration.flybyPitch);
+				}
+				this.Cleanup(true);
+				result = (flag2 ? Projectile.HitType.Stop : Projectile.HitType.StopNoDecal);
+			}
+		}
+		catch (Exception exception)
+		{
+			Debug.LogException(exception);
+			this.Cleanup(true);
+			result = Projectile.HitType.StopNoDecal;
+		}
+		return result;
+	}
+
+	// Token: 0x060006C5 RID: 1733 RVA: 0x00029B34 File Offset: 0x00027D34
+	protected virtual bool DealDamageOnHit()
+	{
+		return true;
+	}
+
+	// Token: 0x060006C6 RID: 1734 RVA: 0x00029B38 File Offset: 0x00027D38
+	protected virtual Projectile.HitDestructibleResult OnHitDestructible(Destructible destructible)
+	{
+		VehicleDestructibleHitbox vehicleDestructibleHitbox = destructible as VehicleDestructibleHitbox;
+		if (destructible.IsShatteredByRating(this.armorDamage))
+		{
+			destructible.Shatter(this);
+			return Projectile.HitDestructibleResult.Stutter;
+		}
+		if (destructible.IsDamagedByRating(this.armorDamage))
+		{
+			DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.Projectile, this.killCredit, this.sourceWeapon)
+			{
+				healthDamage = this.Damage() * destructible.GetDamageMultiplier(this.armorDamage)
+			};
+			destructible.Damage(info);
+		}
+		bool flag;
+		if (vehicleDestructibleHitbox != null)
+		{
+			flag = (destructible.showHitIndicator && !vehicleDestructibleHitbox.vehicle.dead);
+		}
+		else
+		{
+			flag = destructible.showHitIndicator;
+		}
+		if (!flag)
+		{
+			return Projectile.HitDestructibleResult.Default;
+		}
+		return Projectile.HitDestructibleResult.HitIndicator;
+	}
+
+	// Token: 0x060006C7 RID: 1735 RVA: 0x00029BDC File Offset: 0x00027DDC
+	protected virtual void Cleanup(bool hitSomething)
+	{
+		ProjectilePoolManager.CleanupProjectile(this);
+	}
+
+	// Token: 0x060006C8 RID: 1736 RVA: 0x00029BE4 File Offset: 0x00027DE4
+	protected virtual void SpawnDecal(RaycastHit hitInfo)
+	{
+		DecalManager.AddDecal(hitInfo.point, hitInfo.normal, this.configuration.impactDecalSize, DecalManager.DecalType.Impact);
+	}
+
+	// Token: 0x060006C9 RID: 1737 RVA: 0x00029C05 File Offset: 0x00027E05
+	public virtual float Damage()
+	{
+		return this.DamageDropOff() * this.configuration.damage;
+	}
+
+	// Token: 0x060006CA RID: 1738 RVA: 0x00029C19 File Offset: 0x00027E19
+	public virtual float BalanceDamage()
+	{
+		return this.DamageDropOff() * this.configuration.balanceDamage;
+	}
+
+	// Token: 0x060006CB RID: 1739 RVA: 0x00029C2D File Offset: 0x00027E2D
+	private float DamageDropOff()
+	{
+		return this.configuration.damageDropOff.Evaluate(this.travelDistance / this.configuration.dropoffEnd);
+	}
+
+	// Token: 0x060006CC RID: 1740 RVA: 0x00029C51 File Offset: 0x00027E51
+	public virtual void StopScripted(bool silent)
+	{
+		this.Cleanup(false);
+	}
+
+	// Token: 0x0400060B RID: 1547
+	public const int PROJECTILE_PENETRATE_LAYER = 21;
+
+	// Token: 0x0400060C RID: 1548
+	private const float AI_IGNORE_GEOMETRY_DISTANCE = 1.5f;
+
+	// Token: 0x0400060D RID: 1549
+	private static RaycastHit[] RAYCAST_RESULTS = new RaycastHit[1024];
+
+	// Token: 0x0400060E RID: 1550
+	private const float PASS_PLAYER_MAX_SOUND_DISTANCE = 15f;
+
+	// Token: 0x0400060F RID: 1551
+	private const int LEVEL_LAYER = 0;
+
+	// Token: 0x04000610 RID: 1552
+	private const int NO_ACTOR_COLLISION_LAYER = 15;
+
+	// Token: 0x04000611 RID: 1553
+	private const int RAGDOLL_LAYER = 10;
+
+	// Token: 0x04000612 RID: 1554
+	private const int IGNORE_RAYCAST_LAYER = 2;
+
+	// Token: 0x04000613 RID: 1555
+	private const int ACTOR_ONLY_COLLISION = 17;
+
+	// Token: 0x04000614 RID: 1556
+	public const int LEAVE_DECAL_LAYER_MASK = 32769;
+
+	// Token: 0x04000615 RID: 1557
+	public const int HIT_MASK = -29493765;
+
+	// Token: 0x04000616 RID: 1558
+	public const int HIT_MASK_PENETRATING = -31590917;
+
+	// Token: 0x04000617 RID: 1559
+	public const int HIT_MASK_NO_FIRST_PERSON_MODEL_COLLISION = -29755909;
+
+	// Token: 0x04000618 RID: 1560
+	public const int HIT_MASK_PENETRATING_NO_FIRST_PERSON_MODEL_COLLISION = -31853061;
+
+	// Token: 0x04000619 RID: 1561
+	private const float PIERCING_RANGE = 5f;
+
+	// Token: 0x0400061A RID: 1562
+	private const float VEHICLE_IMPACT_FORCE_THRESHOLD = 300f;
+
+	// Token: 0x0400061B RID: 1563
+	private const float MANNED_VEHICLE_IMPACT_FORCE_MULTIPLIER = 0.2f;
+
+	// Token: 0x0400061C RID: 1564
+	public Projectile.Configuration configuration;
+
+	// Token: 0x0400061D RID: 1565
+	public bool autoAssignArmorDamage = true;
+
+	// Token: 0x0400061E RID: 1566
+	public Vehicle.ArmorRating armorDamage;
+
+	// Token: 0x0400061F RID: 1567
+	[NonSerialized]
+	public Vector3 velocity = Vector3.zero;
+
+	// Token: 0x04000620 RID: 1568
+	protected float expireTime;
+
+	// Token: 0x04000621 RID: 1569
+	[NonSerialized]
+	public Actor killCredit;
+
+	// Token: 0x04000622 RID: 1570
+	[NonSerialized]
+	public Weapon sourceWeapon;
+
+	// Token: 0x04000623 RID: 1571
+	[NonSerialized]
+	public bool travellingTowardsPlayer;
+
+	// Token: 0x04000624 RID: 1572
+	[NonSerialized]
+	public bool performInfantryInitialMuzzleTravel;
+
+	// Token: 0x04000625 RID: 1573
+	[NonSerialized]
+	public float initialMuzzleTravelDistance;
+
+	// Token: 0x04000626 RID: 1574
+	[NonSerialized]
+	public float travelDistance;
+
+	// Token: 0x04000627 RID: 1575
+	[NonSerialized]
+	public int prefabInstanceId;
+
+	// Token: 0x04000628 RID: 1576
+	private TrailRenderer trailRenderer;
+
+	// Token: 0x04000629 RID: 1577
+	protected int hitMask;
+
+	// Token: 0x0400062A RID: 1578
+	[NonSerialized]
+	public bool firedByAI;
+
+	// Token: 0x0400062B RID: 1579
+	[NonSerialized]
+	public bool firedByPlayer;
+
+	// Token: 0x0400062C RID: 1580
+	[NonSerialized]
+	public bool ignoresInitialGeometry;
+
+	// Token: 0x0400062D RID: 1581
+	protected int ownerTeam = -1;
+
+	// Token: 0x020007A1 RID: 1953
+	protected enum HitType
+	{
+		// Token: 0x040028A9 RID: 10409
+		None,
+		// Token: 0x040028AA RID: 10410
+		Stop,
+		// Token: 0x040028AB RID: 10411
+		StopNoDecal,
+		// Token: 0x040028AC RID: 10412
+		Stutter
+	}
+
+	// Token: 0x020007A2 RID: 1954
+	protected enum HitDestructibleResult
+	{
+		// Token: 0x040028AE RID: 10414
+		Stutter,
+		// Token: 0x040028AF RID: 10415
+		HitIndicator,
+		// Token: 0x040028B0 RID: 10416
+		Default
+	}
+
+	// Token: 0x020007A3 RID: 1955
+	[Serializable]
+	public class Configuration
+	{
+		// Token: 0x040028B1 RID: 10417
+		public float speed = 300f;
+
+		// Token: 0x040028B2 RID: 10418
+		public float impactForce = 200f;
+
+		// Token: 0x040028B3 RID: 10419
+		public float lifetime = 2f;
+
+		// Token: 0x040028B4 RID: 10420
+		public float damage = 70f;
+
+		// Token: 0x040028B5 RID: 10421
+		public float balanceDamage = 60f;
+
+		// Token: 0x040028B6 RID: 10422
+		public float impactDecalSize = 0.2f;
+
+		// Token: 0x040028B7 RID: 10423
+		public bool passThroughPenetrateLayer = true;
+
+		// Token: 0x040028B8 RID: 10424
+		public bool piercing;
+
+		// Token: 0x040028B9 RID: 10425
+		public bool makesFlybySound;
+
+		// Token: 0x040028BA RID: 10426
+		public float flybyPitch = 1f;
+
+		// Token: 0x040028BB RID: 10427
+		public float dropoffEnd = 300f;
+
+		// Token: 0x040028BC RID: 10428
+		public AnimationCurve damageDropOff;
+
+		// Token: 0x040028BD RID: 10429
+		public float gravityMultiplier = 1f;
+
+		// Token: 0x040028BE RID: 10430
+		public bool inheritVelocity;
+	}
+}

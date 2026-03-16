@@ -1,0 +1,238 @@
+using System;
+using UnityEngine;
+using UnityEngine.UI;
+
+// Token: 0x020000FD RID: 253
+public class PointMatch : GameModeBase
+{
+	// Token: 0x060009BA RID: 2490 RVA: 0x0003817C File Offset: 0x0003637C
+	private void AddScore(int blue, int red)
+	{
+		if (Benchmark.isRunning)
+		{
+			return;
+		}
+		this.blueScore += blue * PointMatch.ScoreMultiplier(this.blueFlags);
+		this.redScore += red * PointMatch.ScoreMultiplier(this.redFlags);
+		if (blue > 0)
+		{
+			this.bluePulse.Start();
+		}
+		if (red > 0)
+		{
+			this.redPulse.Start();
+		}
+		this.UpdateUi();
+		if (!VictoryUi.GameHasEnded())
+		{
+			if (this.blueScore >= this.redScore + this.victoryPoints)
+			{
+				this.Win(0);
+				return;
+			}
+			if (this.redScore >= this.blueScore + this.victoryPoints)
+			{
+				this.Win(1);
+			}
+		}
+	}
+
+	// Token: 0x060009BB RID: 2491 RVA: 0x0003822C File Offset: 0x0003642C
+	private void UpdateFlags(bool initialOwner)
+	{
+		if (Benchmark.isRunning)
+		{
+			return;
+		}
+		this.blueFlags = 0;
+		this.redFlags = 0;
+		foreach (SpawnPoint spawnPoint in ActorManager.instance.spawnPoints)
+		{
+			if (!spawnPoint.isGhostSpawn)
+			{
+				if (spawnPoint.owner == 0)
+				{
+					this.blueFlags++;
+				}
+				else if (spawnPoint.owner == 1)
+				{
+					this.redFlags++;
+				}
+			}
+		}
+		this.UpdateUi();
+		if (!initialOwner && !VictoryUi.GameHasEnded())
+		{
+			if (!ActorManager.TeamHasAnySpawnPoint(0))
+			{
+				VictoryUi.EndGame(1, true);
+				return;
+			}
+			if (!ActorManager.TeamHasAnySpawnPoint(1))
+			{
+				VictoryUi.EndGame(0, true);
+			}
+		}
+	}
+
+	// Token: 0x060009BC RID: 2492 RVA: 0x000382D2 File Offset: 0x000364D2
+	public static int ScoreMultiplier(int flags)
+	{
+		return flags;
+	}
+
+	// Token: 0x060009BD RID: 2493 RVA: 0x000382D8 File Offset: 0x000364D8
+	public override void ActivateGameMode()
+	{
+		base.ActivateGameMode();
+		this.blueScore = 0;
+		this.redScore = 0;
+		this.blueFlags = 0;
+		this.redFlags = 0;
+		int gameLength = GameManager.GameParameters().GetGameLength();
+		if (gameLength == 0)
+		{
+			this.victoryPoints = 150;
+		}
+		else if (gameLength == 1)
+		{
+			this.victoryPoints = 300;
+		}
+		else if (gameLength == 2)
+		{
+			this.victoryPoints = 600;
+		}
+		else
+		{
+			this.victoryPoints = 2000;
+		}
+		this.blue = ColorScheme.InterfaceColor(0, ColorVariant.Bright);
+		this.red = ColorScheme.InterfaceColor(1, ColorVariant.Bright);
+		this.blueBar.color = this.blue;
+		this.redBar.color = this.red;
+		this.UpdateUi();
+	}
+
+	// Token: 0x060009BE RID: 2494 RVA: 0x00038391 File Offset: 0x00036591
+	public override void StartGame()
+	{
+		base.StartGame();
+		ActorManager.instance.CreateDefaultAiActors();
+		this.UpdateFlags(true);
+	}
+
+	// Token: 0x060009BF RID: 2495 RVA: 0x000383AA File Offset: 0x000365AA
+	public override void PlayerAcceptedLoadoutFirstTime()
+	{
+		base.PlayerAcceptedLoadoutFirstTime();
+		base.Invoke("Tooltip", 4f);
+	}
+
+	// Token: 0x060009C0 RID: 2496 RVA: 0x000383C2 File Offset: 0x000365C2
+	private void Tooltip()
+	{
+		IngameUI.ShowOverlayText("SCORE " + this.victoryPoints.ToString() + " POINTS MORE THAN THE ENEMY TO WIN", 5f);
+	}
+
+	// Token: 0x060009C1 RID: 2497 RVA: 0x000383E8 File Offset: 0x000365E8
+	private void UpdateUi()
+	{
+		this.blueScoreText.text = this.blueScore.ToString();
+		this.redScoreText.text = this.redScore.ToString();
+		this.blueFlagsText.text = this.blueFlags.ToString();
+		this.redFlagsText.text = this.redFlags.ToString();
+		bool flag = this.blueScore + this.redScore >= this.victoryPoints;
+		this.intercept.enabled = flag;
+		if (!flag)
+		{
+			float x = (float)this.blueScore / (float)this.victoryPoints;
+			float x2 = 1f - (float)this.redScore / (float)this.victoryPoints;
+			this.blueBar.rectTransform.anchorMax = new Vector2(x, 1f);
+			this.redBar.rectTransform.anchorMin = new Vector2(x2, 0f);
+			return;
+		}
+		float x3 = Mathf.Clamp01((float)(this.blueScore - this.redScore + this.victoryPoints) / (float)(2 * this.victoryPoints));
+		this.blueBar.rectTransform.anchorMax = new Vector2(x3, 1f);
+		this.redBar.rectTransform.anchorMin = new Vector2(x3, 0f);
+		this.intercept.rectTransform.anchorMin = new Vector2(x3, 0f);
+		this.intercept.rectTransform.anchorMax = new Vector2(x3, 1f);
+	}
+
+	// Token: 0x060009C2 RID: 2498 RVA: 0x00038564 File Offset: 0x00036764
+	private void Update()
+	{
+		if (!this.bluePulse.Done())
+		{
+			this.blueBar.color = Color.Lerp(Color.white, this.blue, this.bluePulse.Ratio());
+		}
+		if (!this.redPulse.Done())
+		{
+			this.redBar.color = Color.Lerp(Color.white, this.red, this.redPulse.Ratio());
+		}
+	}
+
+	// Token: 0x060009C3 RID: 2499 RVA: 0x000385D7 File Offset: 0x000367D7
+	public override void ActorDied(Actor actor, Vector3 position, bool wasSilentKill)
+	{
+		base.ActorDied(actor, position, wasSilentKill);
+		if (!wasSilentKill)
+		{
+			this.AddScore((actor.team == 1) ? 1 : 0, (actor.team == 0) ? 1 : 0);
+		}
+	}
+
+	// Token: 0x060009C4 RID: 2500 RVA: 0x00038604 File Offset: 0x00036804
+	public override void CapturePointChangedOwner(CapturePoint capturePoint, int oldOwner, bool initialOwner)
+	{
+		base.CapturePointChangedOwner(capturePoint, oldOwner, initialOwner);
+		this.UpdateFlags(initialOwner);
+	}
+
+	// Token: 0x04000946 RID: 2374
+	public Text blueScoreText;
+
+	// Token: 0x04000947 RID: 2375
+	public Text redScoreText;
+
+	// Token: 0x04000948 RID: 2376
+	public Text blueFlagsText;
+
+	// Token: 0x04000949 RID: 2377
+	public Text redFlagsText;
+
+	// Token: 0x0400094A RID: 2378
+	public Image blueBar;
+
+	// Token: 0x0400094B RID: 2379
+	public Image redBar;
+
+	// Token: 0x0400094C RID: 2380
+	public Image intercept;
+
+	// Token: 0x0400094D RID: 2381
+	private int blueScore;
+
+	// Token: 0x0400094E RID: 2382
+	private int redScore;
+
+	// Token: 0x0400094F RID: 2383
+	private int blueFlags;
+
+	// Token: 0x04000950 RID: 2384
+	private int redFlags;
+
+	// Token: 0x04000951 RID: 2385
+	private int victoryPoints;
+
+	// Token: 0x04000952 RID: 2386
+	private Color blue;
+
+	// Token: 0x04000953 RID: 2387
+	private Color red;
+
+	// Token: 0x04000954 RID: 2388
+	private TimedAction bluePulse = new TimedAction(0.5f, false);
+
+	// Token: 0x04000955 RID: 2389
+	private TimedAction redPulse = new TimedAction(0.5f, false);
+}

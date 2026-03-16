@@ -1,0 +1,346 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+// Token: 0x0200006C RID: 108
+[Serializable]
+public class TeamInfo
+{
+	// Token: 0x06000595 RID: 1429 RVA: 0x000243B0 File Offset: 0x000225B0
+	public static TeamInfo Default(int team)
+	{
+		TeamInfo teamInfo = new TeamInfo();
+		teamInfo.isConnectedToGameConfig = false;
+		teamInfo.skin = null;
+		teamInfo.ClearWeaponEntries();
+		teamInfo.AddDefaultWeapons();
+		teamInfo.AddOfficialVehicles();
+		teamInfo.teamName = GameManager.DEFAULT_TEAM_NAMES[team];
+		if (team == 0)
+		{
+			teamInfo.teamColor = Color.blue;
+		}
+		else
+		{
+			teamInfo.teamColor = Color.red;
+		}
+		return teamInfo;
+	}
+
+	// Token: 0x06000596 RID: 1430 RVA: 0x0002440C File Offset: 0x0002260C
+	public TeamInfo()
+	{
+		VehicleSpawner.VehicleSpawnType[] array = (VehicleSpawner.VehicleSpawnType[])Enum.GetValues(typeof(VehicleSpawner.VehicleSpawnType));
+		TurretSpawner.TurretSpawnType[] array2 = (TurretSpawner.TurretSpawnType[])Enum.GetValues(typeof(TurretSpawner.TurretSpawnType));
+		foreach (VehicleSpawner.VehicleSpawnType key in array)
+		{
+			this.vehicleSlot.Add(key, new VehicleSlotInfo());
+		}
+		foreach (TurretSpawner.TurretSpawnType key2 in array2)
+		{
+			this.turretSlot.Add(key2, new VehicleSlotInfo());
+		}
+		this.teamColor = Color.blue;
+		this.teamName = GameManager.DEFAULT_TEAM_NAMES[0];
+	}
+
+	// Token: 0x06000597 RID: 1431 RVA: 0x000244D0 File Offset: 0x000226D0
+	public TeamInfo(TeamInfo original)
+	{
+		this.availableWeapons = new WeaponCollectionInfo(original.availableWeapons);
+		VehicleSpawner.VehicleSpawnType[] array = (VehicleSpawner.VehicleSpawnType[])Enum.GetValues(typeof(VehicleSpawner.VehicleSpawnType));
+		TurretSpawner.TurretSpawnType[] array2 = (TurretSpawner.TurretSpawnType[])Enum.GetValues(typeof(TurretSpawner.TurretSpawnType));
+		foreach (VehicleSpawner.VehicleSpawnType key in array)
+		{
+			this.vehicleSlot.Add(key, new VehicleSlotInfo(original.vehicleSlot[key]));
+		}
+		foreach (TurretSpawner.TurretSpawnType key2 in array2)
+		{
+			this.turretSlot.Add(key2, new VehicleSlotInfo(original.turretSlot[key2]));
+		}
+		this.skin = original.skin;
+		this.teamName = original.teamName;
+		this.teamColor = original.teamColor;
+		this.isConnectedToGameConfig = original.isConnectedToGameConfig;
+	}
+
+	// Token: 0x06000598 RID: 1432 RVA: 0x000245D8 File Offset: 0x000227D8
+	public void LoadDefault(int team)
+	{
+		this.isConnectedToGameConfig = false;
+		this.skin = null;
+		this.ClearWeaponEntries();
+		this.AddDefaultWeapons();
+		this.AddOfficialVehicles();
+		GameManager.instance.SetTeamName(team, GameManager.DEFAULT_TEAM_NAMES[team]);
+		GameManager.instance.SetTeamColor(team, (team == 0) ? Color.blue : Color.red);
+	}
+
+	// Token: 0x06000599 RID: 1433 RVA: 0x00024634 File Offset: 0x00022834
+	public void AddDefaultWeapons()
+	{
+		foreach (WeaponManager.WeaponEntry weaponEntry in WeaponManager.instance.allWeapons)
+		{
+			if (weaponEntry.isAvailableByDefault)
+			{
+				this.AddWeaponEntry(weaponEntry);
+			}
+		}
+	}
+
+	// Token: 0x0600059A RID: 1434 RVA: 0x00024694 File Offset: 0x00022894
+	public IEnumerable<VehicleSpawnConfiguration> GetAvailableSpawnsForVehicle(VehicleInfo info)
+	{
+		foreach (VehicleSpawner.VehicleSpawnType vehicleSpawnType in VehicleSpawner.ALL_VEHICLE_TYPES)
+		{
+			RarityTier tier;
+			if (this.vehicleSlot[vehicleSpawnType].IsAvailable(info, out tier))
+			{
+				yield return new VehicleSpawnConfiguration
+				{
+					type = vehicleSpawnType,
+					tier = tier
+				};
+			}
+		}
+		VehicleSpawner.VehicleSpawnType[] array = null;
+		yield break;
+	}
+
+	// Token: 0x0600059B RID: 1435 RVA: 0x000246AB File Offset: 0x000228AB
+	public IEnumerable<TurretSpawnConfiguration> GetAvailableSpawnsForTurret(VehicleInfo info)
+	{
+		foreach (TurretSpawner.TurretSpawnType turretSpawnType in TurretSpawner.ALL_TURRET_TYPES)
+		{
+			RarityTier tier;
+			if (this.turretSlot[turretSpawnType].IsAvailable(info, out tier))
+			{
+				yield return new TurretSpawnConfiguration
+				{
+					type = turretSpawnType,
+					tier = tier
+				};
+			}
+		}
+		TurretSpawner.TurretSpawnType[] array = null;
+		yield break;
+	}
+
+	// Token: 0x0600059C RID: 1436 RVA: 0x000246C4 File Offset: 0x000228C4
+	public IEnumerable<VehicleInfo> AllVehicles()
+	{
+		HashSet<VehicleInfo> hashSet = new HashSet<VehicleInfo>();
+		foreach (VehicleSpawner.VehicleSpawnType key in VehicleSpawner.ALL_VEHICLE_TYPES)
+		{
+			foreach (VehicleInfo item in this.vehicleSlot[key].All())
+			{
+				hashSet.Add(item);
+			}
+		}
+		return hashSet;
+	}
+
+	// Token: 0x0600059D RID: 1437 RVA: 0x00024744 File Offset: 0x00022944
+	public IEnumerable<VehicleInfo> AllTurrets()
+	{
+		HashSet<VehicleInfo> hashSet = new HashSet<VehicleInfo>();
+		foreach (TurretSpawner.TurretSpawnType key in TurretSpawner.ALL_TURRET_TYPES)
+		{
+			foreach (VehicleInfo item in this.turretSlot[key].All())
+			{
+				hashSet.Add(item);
+			}
+		}
+		return hashSet;
+	}
+
+	// Token: 0x0600059E RID: 1438 RVA: 0x000247C4 File Offset: 0x000229C4
+	public void AddWeaponEntry(WeaponManager.WeaponEntry entry)
+	{
+		this.availableWeapons.SetEntryTier(entry, entry.defaultTier);
+	}
+
+	// Token: 0x0600059F RID: 1439 RVA: 0x000247D8 File Offset: 0x000229D8
+	public void AddWeaponEntry(WeaponManager.WeaponEntry entry, RarityTier overrideTier)
+	{
+		this.availableWeapons.SetEntryTier(entry, overrideTier);
+	}
+
+	// Token: 0x060005A0 RID: 1440 RVA: 0x000247E7 File Offset: 0x000229E7
+	public void RemoveWeaponEntry(WeaponManager.WeaponEntry entry)
+	{
+		this.availableWeapons.RemoveEntry(entry);
+	}
+
+	// Token: 0x060005A1 RID: 1441 RVA: 0x000247F5 File Offset: 0x000229F5
+	public void ClearWeaponEntries()
+	{
+		this.availableWeapons.ClearAll();
+	}
+
+	// Token: 0x060005A2 RID: 1442 RVA: 0x00024802 File Offset: 0x00022A02
+	public bool IsWeaponEntryAvailable(WeaponManager.WeaponEntry entry)
+	{
+		return this.availableWeapons.Contains(entry);
+	}
+
+	// Token: 0x060005A3 RID: 1443 RVA: 0x00024810 File Offset: 0x00022A10
+	public void ClearVehicles()
+	{
+		foreach (VehicleSlotInfo vehicleSlotInfo in this.vehicleSlot.Values)
+		{
+			vehicleSlotInfo.ClearEntries();
+		}
+	}
+
+	// Token: 0x060005A4 RID: 1444 RVA: 0x00024868 File Offset: 0x00022A68
+	public void ClearTurrets()
+	{
+		foreach (VehicleSlotInfo vehicleSlotInfo in this.turretSlot.Values)
+		{
+			vehicleSlotInfo.ClearEntries();
+		}
+	}
+
+	// Token: 0x060005A5 RID: 1445 RVA: 0x000248C0 File Offset: 0x00022AC0
+	public void AddVehicle(VehicleSpawner.VehicleSpawnType type, RarityTier tier, VehicleInfo vehicle)
+	{
+		this.vehicleSlot[type].SetVehicleTier(tier, vehicle);
+	}
+
+	// Token: 0x060005A6 RID: 1446 RVA: 0x000248D5 File Offset: 0x00022AD5
+	public void AddTurret(TurretSpawner.TurretSpawnType type, RarityTier tier, VehicleInfo vehicle)
+	{
+		this.turretSlot[type].SetVehicleTier(tier, vehicle);
+	}
+
+	// Token: 0x060005A7 RID: 1447 RVA: 0x000248EA File Offset: 0x00022AEA
+	public void RemoveVehicle(VehicleSpawner.VehicleSpawnType type, VehicleInfo vehicle)
+	{
+		this.vehicleSlot[type].RemoveVehicle(vehicle);
+	}
+
+	// Token: 0x060005A8 RID: 1448 RVA: 0x000248FE File Offset: 0x00022AFE
+	public void RemoveTurret(TurretSpawner.TurretSpawnType type, VehicleInfo vehicle)
+	{
+		this.turretSlot[type].RemoveVehicle(vehicle);
+	}
+
+	// Token: 0x060005A9 RID: 1449 RVA: 0x00024914 File Offset: 0x00022B14
+	public void AddAllWeapons()
+	{
+		foreach (WeaponManager.WeaponEntry entry in WeaponManager.instance.allWeapons)
+		{
+			this.AddWeaponEntry(entry);
+		}
+	}
+
+	// Token: 0x060005AA RID: 1450 RVA: 0x0002496C File Offset: 0x00022B6C
+	public void AddOfficialVehicles()
+	{
+		this.ClearVehicles();
+		this.ClearTurrets();
+		for (int i = 0; i < VehicleSpawner.ALL_VEHICLE_TYPES.Length; i++)
+		{
+			VehicleInfo fromPrefab = VehicleInfo.GetFromPrefab(ActorManager.instance.defaultVehiclePrefabs[i]);
+			VehicleEntryData vehicleEntryData = new VehicleEntryData(VehicleSpawner.ALL_VEHICLE_TYPES[i], null, fromPrefab, true);
+			this.AddVehicle(vehicleEntryData.vehicleType, vehicleEntryData.defaultRarityTier, vehicleEntryData.vehicle);
+		}
+		for (int j = 0; j < TurretSpawner.ALL_TURRET_TYPES.Length; j++)
+		{
+			VehicleInfo fromPrefab2 = VehicleInfo.GetFromPrefab(ActorManager.instance.defaultTurretPrefabs[j]);
+			VehicleEntryData vehicleEntryData2 = new VehicleEntryData(TurretSpawner.ALL_TURRET_TYPES[j], null, fromPrefab2, true);
+			this.AddTurret(vehicleEntryData2.turretType, vehicleEntryData2.defaultRarityTier, vehicleEntryData2.vehicle);
+		}
+	}
+
+	// Token: 0x060005AB RID: 1451 RVA: 0x00024A24 File Offset: 0x00022C24
+	private void AddDefaultWeaponsOfMod(ModInformation sourceMod)
+	{
+		foreach (WeaponManager.WeaponEntry weaponEntry in WeaponManager.instance.allWeapons)
+		{
+			if (weaponEntry.sourceMod == sourceMod && weaponEntry.isAvailableByDefault && weaponEntry.usableByAi)
+			{
+				this.AddWeaponEntry(weaponEntry);
+			}
+		}
+	}
+
+	// Token: 0x060005AC RID: 1452 RVA: 0x00024A94 File Offset: 0x00022C94
+	private void ApplyVehiclesOfMod(ModInformation sourceMod)
+	{
+		if (!sourceMod.HasVehicleContentMods())
+		{
+			return;
+		}
+		VehicleContentMod vehicleContentMod = sourceMod.vehicleContentMods[0];
+		if (vehicleContentMod.IsLegacyVersion())
+		{
+			this.AddVehicles(vehicleContentMod, RarityTier.Common);
+			return;
+		}
+		this.AddVehicles(vehicleContentMod.variants[0], RarityTier.Common);
+		for (int i = 1; i < vehicleContentMod.variants.Length; i++)
+		{
+			this.AddVehicles(vehicleContentMod.variants[i], RarityTier.Uncommon);
+		}
+	}
+
+	// Token: 0x060005AD RID: 1453 RVA: 0x00024AFC File Offset: 0x00022CFC
+	private void AddVehicles(IVehicleContentProvider provider, RarityTier tier)
+	{
+		VehicleSpawner.VehicleSpawnType[] array = (VehicleSpawner.VehicleSpawnType[])Enum.GetValues(typeof(VehicleSpawner.VehicleSpawnType));
+		TurretSpawner.TurretSpawnType[] array2 = (TurretSpawner.TurretSpawnType[])Enum.GetValues(typeof(TurretSpawner.TurretSpawnType));
+		foreach (VehicleSpawner.VehicleSpawnType vehicleSpawnType in array)
+		{
+			VehicleInfo fromPrefab = VehicleInfo.GetFromPrefab(provider.GetVehiclePrefab(vehicleSpawnType));
+			if (fromPrefab != null)
+			{
+				this.vehicleSlot[vehicleSpawnType].SetVehicleTier(tier, fromPrefab);
+			}
+		}
+		foreach (TurretSpawner.TurretSpawnType turretSpawnType in array2)
+		{
+			VehicleInfo fromPrefab2 = VehicleInfo.GetFromPrefab(provider.GetVehiclePrefab(turretSpawnType));
+			if (fromPrefab2 != null)
+			{
+				this.turretSlot[turretSpawnType].SetVehicleTier(tier, fromPrefab2);
+			}
+		}
+	}
+
+	// Token: 0x060005AE RID: 1454 RVA: 0x00024BAC File Offset: 0x00022DAC
+	public void AdditiveLoadSingleMod(ModInformation mod, int team)
+	{
+		Debug.Log("adding from mod " + mod.title);
+		this.AddDefaultWeaponsOfMod(mod);
+		this.ApplyVehiclesOfMod(mod);
+		if (mod.HasSkinContentMods())
+		{
+			ActorSkinContentMod actorSkinContentMod = mod.skinContentMods[0];
+			int index = Mathf.Max(team, actorSkinContentMod.skins.Count);
+			this.skin = actorSkinContentMod.skins[index];
+		}
+	}
+
+	// Token: 0x0400051F RID: 1311
+	public WeaponCollectionInfo availableWeapons = new WeaponCollectionInfo();
+
+	// Token: 0x04000520 RID: 1312
+	public Dictionary<VehicleSpawner.VehicleSpawnType, VehicleSlotInfo> vehicleSlot = new Dictionary<VehicleSpawner.VehicleSpawnType, VehicleSlotInfo>();
+
+	// Token: 0x04000521 RID: 1313
+	public Dictionary<TurretSpawner.TurretSpawnType, VehicleSlotInfo> turretSlot = new Dictionary<TurretSpawner.TurretSpawnType, VehicleSlotInfo>();
+
+	// Token: 0x04000522 RID: 1314
+	public ActorSkin skin;
+
+	// Token: 0x04000523 RID: 1315
+	public string teamName;
+
+	// Token: 0x04000524 RID: 1316
+	public Color teamColor;
+
+	// Token: 0x04000525 RID: 1317
+	public bool isConnectedToGameConfig;
+}

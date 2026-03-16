@@ -1,0 +1,112 @@
+using System;
+using UnityEngine;
+
+// Token: 0x02000054 RID: 84
+public class Hitbox : MonoBehaviour
+{
+	// Token: 0x0600031D RID: 797 RVA: 0x00012A29 File Offset: 0x00010C29
+	public static bool IsHitboxLayer(int layer)
+	{
+		return layer == 8 || layer == 10 || layer == 16;
+	}
+
+	// Token: 0x0600031E RID: 798 RVA: 0x00012A3C File Offset: 0x00010C3C
+	private void Start()
+	{
+		Actor actor = this.parent as Actor;
+		if (actor != null)
+		{
+			this.team = actor.team;
+		}
+	}
+
+	// Token: 0x0600031F RID: 799 RVA: 0x00012A6C File Offset: 0x00010C6C
+	public bool ProjectileHit(Projectile p, Vector3 position)
+	{
+		float num = this.multiplier;
+		if (this.heightBasedMultiplier)
+		{
+			float x = base.transform.worldToLocalMatrix.MultiplyPoint(position).x;
+			float t = Mathf.Clamp01(0.95f - x);
+			num = Mathf.Lerp(this.minMultiplier, this.multiplier, t);
+		}
+		bool result;
+		try
+		{
+			DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.Projectile, p.killCredit, p.sourceWeapon)
+			{
+				healthDamage = p.Damage() * num,
+				balanceDamage = p.BalanceDamage(),
+				isPiercing = p.configuration.piercing,
+				isCriticalHit = (num > 1.01f),
+				point = position,
+				direction = p.transform.forward,
+				impactForce = p.configuration.impactForce * p.transform.forward
+			};
+			result = this.parent.Damage(info);
+		}
+		catch (Exception)
+		{
+			result = false;
+		}
+		return result;
+	}
+
+	// Token: 0x06000320 RID: 800 RVA: 0x00012B80 File Offset: 0x00010D80
+	public bool VehicleHit(Vehicle vehicle, Vector3 position)
+	{
+		if (!this.parent.CanBeRammedBy(vehicle))
+		{
+			return false;
+		}
+		Actor actor = this.parent as Actor;
+		Rigidbody rigidbody = vehicle.rigidbody;
+		float healthDamage = Mathf.Clamp(rigidbody.velocity.magnitude * 5f, 0f, 200f);
+		float d = Mathf.Min(10f, rigidbody.mass * 0.01f);
+		DamageInfo info = new DamageInfo(DamageInfo.DamageSourceType.VehicleRam, vehicle.Driver(), null)
+		{
+			healthDamage = healthDamage,
+			balanceDamage = 200f,
+			isSplashDamage = true,
+			point = position,
+			direction = rigidbody.velocity.normalized,
+			impactForce = rigidbody.velocity * d
+		};
+		if (!(actor == null) && !actor.aiControlled)
+		{
+			info.healthDamage *= 0.5f;
+		}
+		return this.parent.Damage(info);
+	}
+
+	// Token: 0x04000285 RID: 645
+	public const int LAYER = 8;
+
+	// Token: 0x04000286 RID: 646
+	public const int RAGDOLL_LAYER = 10;
+
+	// Token: 0x04000287 RID: 647
+	public const int SEATED_LAYER = 16;
+
+	// Token: 0x04000288 RID: 648
+	private const float RIGIDBODY_HIT_FORCE = 0.01f;
+
+	// Token: 0x04000289 RID: 649
+	private const float MAX_HIT_FORCE_GAIN = 10f;
+
+	// Token: 0x0400028A RID: 650
+	public Hurtable parent;
+
+	// Token: 0x0400028B RID: 651
+	public float multiplier = 1f;
+
+	// Token: 0x0400028C RID: 652
+	public bool heightBasedMultiplier;
+
+	// Token: 0x0400028D RID: 653
+	public float minMultiplier = 0.5f;
+
+	// Token: 0x0400028E RID: 654
+	[NonSerialized]
+	public int team = -1;
+}
