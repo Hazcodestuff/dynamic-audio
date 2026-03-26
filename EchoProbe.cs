@@ -392,7 +392,6 @@ namespace Ravenfield.EchoProbe
 
             reverb.reverbPreset = AudioReverbPreset.User;
             reverb.dryLevel = 1f; // FIXED: Must be 1 to hear original sound + reverb
-            reverb.wetLevel = 1f; // FIXED: Enable wet (reverb) signal
             reverb.diffusion = 100f;
             reverb.density = 100f;
 
