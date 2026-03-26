@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus
-// Version: 5.4.0 - MAJOR FIX UPDATE: Fixed spectator muffling, APC weapon sync, tinnitus not disabling, wall occlusion stacking: Optimized for many bots, fixed distant audio muffling, tinnitus disabled by default and only triggers in loud reverberant environments.
+// Version: 5.5.0 - CRITICAL FIXES: Fixed missing reverb in enclosed spaces (dryLevel/wetLevel), fixed APC autocannon sound sync (only delay impulsive sounds, not continuous fire), improved wall occlusion detection.
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -16,7 +16,7 @@ using System;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.4.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.5.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -223,7 +223,7 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.4.0 - MAJOR FIX UPDATE");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.5.0 - CRITICAL FIXES");
             
             SetupConfig();
             
@@ -391,7 +391,8 @@ namespace Ravenfield.EchoProbe
             if (!reverb) reverb = listener.gameObject.AddComponent<AudioReverbFilter>();
 
             reverb.reverbPreset = AudioReverbPreset.User;
-            reverb.dryLevel = 0;
+            reverb.dryLevel = 1f; // FIXED: Must be 1 to hear original sound + reverb
+            reverb.wetLevel = 1f; // FIXED: Enable wet (reverb) signal
             reverb.diffusion = 100f;
             reverb.density = 100f;
 
@@ -456,7 +457,7 @@ namespace Ravenfield.EchoProbe
             curRefDel = tgtRefDel = 0.03f;
             Apply();
 
-            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass + tinnitus generator (Dynamic Audio V5.0.0 - Robust Implementation).");
+            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass + tinnitus generator (Dynamic Audio V5.5.0 - CRITICAL FIXES).");
             // initial scan for audio sources
             ScanAudioSources();
         }
@@ -1215,8 +1216,9 @@ namespace Ravenfield.EchoProbe
                 srcLowpass.cutoffFrequency = Mathf.MoveTowards(srcLowpass.cutoffFrequency, cutoffTarget, 5000f * dt);
             }
 
-            // Sound delay simulation: light travels instantly, sound takes time - ROBUST IMPLEMENTATION v5.2
-            // This properly tracks when sounds START playing and delays them accordingly
+            // Sound delay simulation: light travels instantly, sound takes time - ROBUST IMPLEMENTATION v5.4 FIX
+            // CRITICAL FIX: Only apply delay to IMPULSIVE sounds (explosions, gunshots), NOT continuous sounds (APC autocannon, engines)
+            // This fixes the APC autocannon sync issue where rapid-fire weapons had their sounds delayed/muted
             bool shouldApplyDelay = cfg_enableSoundDelay.Value && 
                                     distanceToListener > cfg_soundDelayMinDistance.Value;
             
@@ -1230,23 +1232,27 @@ namespace Ravenfield.EchoProbe
                 if (!soundDelayTimers.ContainsKey(src)) 
                 { 
                     soundDelayTimers[src] = 0f; 
-                    soundPlayed[src] = true;
+                    soundPlayed[src] = src.isPlaying || src.volume > 0.01f; // Track actual playing state
                     lastKnownVolume[src] = src.volume;
                 }
                 
-                // Detect if source just started playing by checking volume change from near-zero
-                // This is more reliable than isPlaying which can have timing issues
+                // CRITICAL FIX: Detect if this is a NEW impulsive sound vs continuous sound
+                // For continuous sounds (APC autocannon, engines), we should NOT apply delay
+                // We detect this by checking if the sound has been playing continuously
                 float currentVol = src.volume;
                 bool wasPlayingLastFrame = soundPlayed.ContainsKey(src) && soundPlayed[src];
-                bool volumeRising = currentVol > 0.01f && lastKnownVolume.ContainsKey(src) && lastKnownVolume[src] < 0.01f;
-                bool isNewSound = !wasPlayingLastFrame && (src.isPlaying || volumeRising);
+                bool wasInDelay = soundDelayTimers.ContainsKey(src) && soundDelayTimers[src] > 0f;
                 
-                // Also detect new sounds by checking if timer expired and sound is still playing
-                bool timerExpired = soundDelayTimers.ContainsKey(src) && soundDelayTimers[src] <= 0f;
-                bool soundStillActive = src.isPlaying || currentVol > 0.01f;
+                // Check if sound just started from silence (true new sound event)
+                // Only trigger delay for sudden loud sounds, not gradual volume changes
+                bool trulyNewSound = !wasPlayingLastFrame && src.isPlaying && currentVol > 0.3f;
                 
-                // If this is a new sound event, start the delay timer
-                if (isNewSound && timerExpired)
+                // For sounds already playing, check if they stopped and restarted (new impulse)
+                bool restartedSound = wasPlayingLastFrame && !src.isPlaying && soundDelayTimers[src] <= 0f;
+                
+                // Only start delay timer for truly new sounds or restarted sounds
+                // Continuous sounds like APC autocannon should bypass delay entirely
+                if ((trulyNewSound || restartedSound) && !wasInDelay)
                 {
                     // Store the current volume so we can restore it after delay
                     lastKnownVolume[src] = originalSourceVolume.ContainsKey(src) ? originalSourceVolume[src] : src.volume;
@@ -1259,9 +1265,14 @@ namespace Ravenfield.EchoProbe
                         Logger.LogInfo($"[DynamicAudio] SOUND DELAY: {src.gameObject.name} at {distanceToListener:F1}m, delay={soundTravelTime:F2}s (speed={cfg_soundSpeed.Value} m/s)");
                     }
                 }
+                else if (src.isPlaying && currentVol > 0.01f)
+                {
+                    // Sound is actively playing - mark as played to prevent future delays for continuous sounds
+                    soundPlayed[src] = true;
+                }
                 
                 // Count down the delay timer
-                if (soundDelayTimers[src] > 0f)
+                if (soundDelayTimers.ContainsKey(src) && soundDelayTimers[src] > 0f)
                 {
                     soundDelayTimers[src] -= dt;
                     // Keep volume at 0 while waiting for sound to arrive
@@ -1269,8 +1280,9 @@ namespace Ravenfield.EchoProbe
                 }
                 else
                 {
-                    // Delay expired - sound can now play
+                    // Delay expired or not applicable - sound can now play
                     soundPlayed[src] = true;
+                    if (soundDelayTimers.ContainsKey(src)) soundDelayTimers[src] = 0f;
                 }
             }
             else
