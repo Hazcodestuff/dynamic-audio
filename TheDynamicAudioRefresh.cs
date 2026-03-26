@@ -1,6 +1,6 @@
 // TheDynamicAudioRefresh.cs
 // BepInEx plugin for Ravenfield — Stable distance-based reverb system
-// Version: 1.0.0 - "The Dynamic Audio Refresh"
+// Version: 1.1.0 - "The Dynamic Audio Refresh" - Fixed enclosure detection
 // Features: Distance calculation to walls, dynamic reverb in enclosed spaces, sound delay simulation
 // C# 7.3 compatible.
 
@@ -13,7 +13,7 @@ using System.IO;
 
 namespace Ravenfield.DynamicAudio
 {
-    [BepInPlugin("dynamic.audio.refresh", "The Dynamic Audio Refresh", "1.0.0")]
+    [BepInPlugin("dynamic.audio.refresh", "The Dynamic Audio Refresh", "1.1.0")]
     public class DynamicAudioRefreshPlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -37,6 +37,10 @@ namespace Ravenfield.DynamicAudio
         // Smoothing
         private ConfigEntry<float> cfg_smoothingSpeed;
         
+        // Thresholds
+        private ConfigEntry<float> cfg_enclosedThreshold;
+        private ConfigEntry<float> cfg_openSkyThreshold;
+        
         // Debug
         private ConfigEntry<bool> cfg_enableDebug;
         
@@ -57,19 +61,27 @@ namespace Ravenfield.DynamicAudio
         private float lastEnclosureFactor;
         private float lastAverageDistance;
         private float lastHitRatio;
+        private bool isEnclosed;
         
         // Sound delay state
         private readonly Dictionary<AudioSource, float> soundDelayTimers = new Dictionary<AudioSource, float>();
         private readonly Dictionary<AudioSource, float> sourceDistances = new Dictionary<AudioSource, float>();
         private float lastDistanceCheckTime;
         
+        // Layer mask for walls/buildings only (exclude sky, players, projectiles)
+        private int wallLayerMask;
+        
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudioRefresh] Initializing The Dynamic Audio Refresh v1.0.0");
+            Logger.LogInfo("[DynamicAudioRefresh] Initializing The Dynamic Audio Refresh v1.1.0");
             
             SetupConfig();
             SceneManager.sceneLoaded += OnSceneLoaded;
             BuildProbeDirections(cfg_probeRays.Value);
+            
+            // Default wall layer mask - will be refined after scene loads
+            // Typically: Terrain, Buildings, Props (exclude: Default, TransparentFX, Ignore Raycast, Water, UI, Projectile, Actor)
+            wallLayerMask = ~((1 << 0) | (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5));
         }
         
         private void OnDestroy()
@@ -85,10 +97,14 @@ namespace Ravenfield.DynamicAudio
             cfg_probeRays = Config.Bind("General", "Probe Rays", 32, "Number of rays to cast for environment probing. Higher = more accurate but higher CPU usage.");
             cfg_maxProbeDistance = Config.Bind("General", "Max Probe Distance", 50f, "Maximum distance for environment probing (meters).");
             
+            // Thresholds for enclosure detection
+            cfg_enclosedThreshold = Config.Bind("Thresholds", "Enclosed Threshold", 0.35f, "Hit ratio above this value means you're enclosed (0-1). Lower = easier to trigger reverb.");
+            cfg_openSkyThreshold = Config.Bind("Thresholds", "Open Sky Threshold", 0.15f, "Hit ratio below this value means you're in open sky (0-1). Higher = more sensitive to open areas.");
+            
             // Reverb
             cfg_minDecay = Config.Bind("Reverb", "Min Decay Time", 0.5f, "Minimum reverb decay time for open areas (seconds).");
             cfg_maxDecay = Config.Bind("Reverb", "Max Decay Time", 4.0f, "Maximum reverb decay time for enclosed spaces (seconds).");
-            cfg_minReverbLevel = Config.Bind("Reverb", "Min Reverb Level", -1800f, "Minimum reverb level (dB) for open areas.");
+            cfg_minReverbLevel = Config.Bind("Reverb", "Min Reverb Level", -1800f, "Minimum reverb level (dB) for open areas (no reverb).");
             cfg_maxReverbLevel = Config.Bind("Reverb", "Max Reverb Level", -100f, "Maximum reverb level (dB) for enclosed spaces.");
             cfg_minRoom = Config.Bind("Reverb", "Min Room Size", -2000f, "Minimum room size (mB) for open areas.");
             cfg_maxRoom = Config.Bind("Reverb", "Max Room Size", 0f, "Maximum room size (mB) for enclosed spaces.");
@@ -186,7 +202,7 @@ namespace Ravenfield.DynamicAudio
             // Debug logging
             if (cfg_enableDebug.Value && Time.frameCount % 30 == 0)
             {
-                Logger.LogInfo($"[DynamicAudioRefresh] Enclosure={lastEnclosureFactor:F2} AvgDist={lastAverageDistance:F1}m Decay={currentDecay:F2}s Room={currentRoom:F0}mB Reverb={currentReverbLevel:F0}dB");
+                Logger.LogInfo($"[DynamicAudioRefresh] Enclosed={isEnclosed} Factor={lastEnclosureFactor:F2} AvgDist={lastAverageDistance:F1}m Decay={currentDecay:F2}s Room={currentRoom:F0}mB Reverb={currentReverbLevel:F0}dB");
             }
         }
         
@@ -222,11 +238,14 @@ namespace Ravenfield.DynamicAudio
             int hitCount = 0;
             float totalDistance = 0f;
             float nearestHit = cfg_maxProbeDistance.Value;
+            int upwardHits = 0;
+            int downwardHits = 0;
             
             foreach (Vector3 direction in probeDirections)
             {
                 RaycastHit hit;
-                if (Physics.Raycast(origin, direction, out hit, cfg_maxProbeDistance.Value, ~0, QueryTriggerInteraction.Ignore))
+                // Use layer mask to only hit walls/buildings/terrain, not players/projectiles
+                if (Physics.Raycast(origin, direction, out hit, cfg_maxProbeDistance.Value, wallLayerMask, QueryTriggerInteraction.Ignore))
                 {
                     hitCount++;
                     totalDistance += hit.distance;
@@ -235,6 +254,18 @@ namespace Ravenfield.DynamicAudio
                     {
                         nearestHit = hit.distance;
                     }
+                    
+                    // Track upward hits (sky detection)
+                    if (direction.y > 0.7f && hit.distance > cfg_maxProbeDistance.Value * 0.8f)
+                    {
+                        upwardHits++;
+                    }
+                    
+                    // Track downward hits (ground detection)
+                    if (direction.y < -0.5f)
+                    {
+                        downwardHits++;
+                    }
                 }
             }
             
@@ -242,17 +273,51 @@ namespace Ravenfield.DynamicAudio
             lastHitRatio = hitCount / (float)cfg_probeRays.Value;
             lastAverageDistance = hitCount > 0 ? totalDistance / hitCount : cfg_maxProbeDistance.Value;
             
-            // Calculate enclosure factor (0 = open, 1 = fully enclosed)
-            // Based on hit ratio and average distance
+            // Determine if enclosed based on multiple factors:
+            // 1. Hit ratio - how many rays hit something
+            // 2. Upward hits - few upward hits means roof/ceiling overhead
+            // 3. Average distance - shorter distances mean smaller space
+            
+            float upwardHitRatio = upwardHits / (float)(cfg_probeRays.Value / 6); // ~1/6 of rays point up
+            bool hasRoof = upwardHitRatio > 0.3f; // If more than 30% of upward rays hit, there's a roof
+            
+            // Calculate enclosure factor with better logic
+            // Only consider truly enclosed if: high hit ratio AND has roof AND short average distance
             float distanceFactor = 1f - Mathf.Clamp01(lastAverageDistance / cfg_maxProbeDistance.Value);
-            lastEnclosureFactor = Mathf.Clamp01((lastHitRatio * 0.6f + distanceFactor * 0.4f));
+            
+            // Base enclosure from hit ratio and distance
+            float baseEnclosure = Mathf.Clamp01((lastHitRatio * 0.5f + distanceFactor * 0.5f));
+            
+            // Apply roof factor - reduces enclosure significantly if no roof (open sky)
+            float roofModifier = hasRoof ? 1.0f : 0.15f;
+            
+            // Final enclosure calculation
+            lastEnclosureFactor = Mathf.Clamp01(baseEnclosure * roofModifier);
+            
+            // Determine if truly enclosed using thresholds
+            isEnclosed = lastHitRatio >= cfg_enclosedThreshold.Value && hasRoof && lastAverageDistance < cfg_maxProbeDistance.Value * 0.4f;
             
             // Map enclosure to reverb parameters
             CalculateReverbParameters(lastEnclosureFactor, lastAverageDistance);
+            
+            if (cfg_enableDebug.Value)
+            {
+                Logger.LogInfo($"[DynamicAudioRefresh] Hits:{hitCount}/{cfg_probeRays.Value} UpHits:{upwardHits} AvgDist:{lastAverageDistance:F1}m HasRoof:{hasRoof} Enclosed:{isEnclosed} Factor:{lastEnclosureFactor:F2}");
+            }
         }
         
         private void CalculateReverbParameters(float enclosure, float avgDistance)
         {
+            // If not enclosed (open sky), use minimum reverb settings
+            if (!isEnclosed)
+            {
+                targetDecay = cfg_minDecay.Value;
+                targetRoom = cfg_minRoom.Value;
+                targetReverbLevel = cfg_minReverbLevel.Value;
+                targetReflectionsDelay = 0.4f;
+                return;
+            }
+            
             // Decay time: longer in enclosed spaces
             targetDecay = Mathf.Lerp(cfg_minDecay.Value, cfg_maxDecay.Value, enclosure);
             
