@@ -202,6 +202,24 @@ namespace Ravenfield.EchoProbe
         private HashSet<string> excludeTags = new HashSet<string>();
         private HashSet<int> excludeLayers = new HashSet<int>();
 
+        // Check if an AudioSource should be excluded from occlusion/delay effects
+        private bool ShouldExcludeSource(AudioSource src)
+        {
+            if (src == null || src.gameObject == null) return false;
+            
+            // Check tags
+            string tag = src.gameObject.tag;
+            if (!string.IsNullOrEmpty(tag) && excludeTags.Contains(tag))
+                return true;
+            
+            // Check layers
+            int layer = src.gameObject.layer;
+            if (excludeLayers.Contains(layer))
+                return true;
+            
+            return false;
+        }
+
 
         private void Awake()
         {
