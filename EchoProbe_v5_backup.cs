@@ -104,10 +104,6 @@ namespace Ravenfield.EchoProbe
         private ConfigEntry<float> cfg_wallMuffleAmount;
         private ConfigEntry<string> cfg_debugMode;
         private ConfigEntry<int> cfg_occlusionLayerMask;
-        
-        // NEW: Exclusion lists config entries
-        private ConfigEntry<string> cfg_excludeTags;
-        private ConfigEntry<string> cfg_excludeLayers;
 
         // Material early-reflection boost (optional)
         // tags map: tag -> early reflection multiplier
@@ -193,25 +189,16 @@ namespace Ravenfield.EchoProbe
         private float lastWallCheckTime;
         private bool configNeedsReload = false;
         private float lastConfigCheckTime;
-        
-        // NEW: Spectator mode detection - fixes spectator muffling issue
-        private bool isSpectating = false;
-        private float lastSpectatorCheck;
-        
-        // NEW: Exclusion sets for tags and layers - prevents self-weapon muffling
-        private HashSet<string> excludeTags = new HashSet<string>();
-        private HashSet<int> excludeLayers = new HashSet<int>();
 
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.4.0 - MAJOR FIX UPDATE");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.0.0 - Tinnitus ENABLED by default for testing");
             
             SetupConfig();
             
             // Set up config file change listener
-            Config.SettingChanged += (sender, e) => { configNeedsReload = true; ParseExclusionLists(); };
-            ParseExclusionLists();
+            Config.SettingChanged += (sender, e) => { configNeedsReload = true; };
             
             SceneManager.sceneLoaded += OnSceneLoaded;
             BuildDirections(cfg_rays.Value);
@@ -311,36 +298,6 @@ namespace Ravenfield.EchoProbe
             cfg_wallMuffleAmount = Config.Bind("WallOcclusion", "Wall Muffle Amount", 0.15f, "Volume multiplier when sound is blocked by a wall (0 = silent, 1 = no change). Lower = more muffled.");
             cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, environment, all");
             cfg_occlusionLayerMask = Config.Bind("WallOcclusion", "Occlusion Layer Mask", -1, "Layer mask for occlusion raycasts. -1 = everything, use layer numbers for filtering.");
-            
-            // NEW: Exclusion lists - prevents muffling of player's own weapons and vehicle weapons
-            Config.Bind("Exclusions", "_categoryDescription", "", "These settings prevent the mod from affecting your own weapons and nearby sounds. Add tags/layers used by vehicles or specific weapons if they're being muffled incorrectly.");
-            cfg_excludeTags = Config.Bind("Exclusions", "Exclude Tags", "Player,LocalPlayer,FirstPersonCamera,Vehicle,PlayerWeapon", "Comma-separated tags to exclude from occlusion/delay effects. Prevents self-weapon muffling. Add vehicle-related tags here if APC weapons are affected.");
-            cfg_excludeLayers = Config.Bind("Exclusions", "Exclude Layers", "9,10,11,13", "Comma-separated layer numbers to exclude from effects. Default: Player(9), PlayerBody(10), PlayerParts(11), Vehicle(13). Add more if needed.");
-        }
-
-        // Parse exclusion lists from config strings
-        private void ParseExclusionLists()
-        {
-            excludeTags.Clear();
-            excludeLayers.Clear();
-            
-            string[] tags = cfg_excludeTags.Value.Split(new char[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (string tag in tags)
-            {
-                string trimmed = tag.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                    excludeTags.Add(trimmed);
-            }
-            
-            string[] layers = cfg_excludeLayers.Value.Split(new char[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (string layer in layers)
-            {
-                int parsed;
-                if (int.TryParse(layer.Trim(), out parsed))
-                    excludeLayers.Add(parsed);
-            }
-            
-            Logger.LogInfo($"[DynamicAudio] Exclusion lists parsed: {excludeTags.Count} tags, {excludeLayers.Count} layers");
         }
 
         private void OnSceneLoaded(Scene s, LoadSceneMode m)
@@ -459,20 +416,6 @@ namespace Ravenfield.EchoProbe
                 Logger.LogInfo("[DynamicAudio] Config file changed - settings will be reloaded on next use");
             }
 
-            // NEW: Detect spectator mode - DISABLE all effects when spectating to fix muffled audio
-            if (Time.unscaledTime - lastSpectatorCheck > 0.5f)
-            {
-                lastSpectatorCheck = Time.unscaledTime;
-                isSpectating = DetectSpectatorMode();
-            }
-
-            // If spectating, restore all audio to normal and skip processing
-            if (isSpectating)
-            {
-                RestoreAllAudioToNormal();
-                return;
-            }
-
             // update listener velocity
             listenerVel = Vector3.Lerp(listenerVel, (ear.position - prevEarPos) / Mathf.Max(0.0001f, Time.unscaledDeltaTime), Time.unscaledDeltaTime * cfg_velocitySmoothing.Value);
             prevEarPos = ear.position;
@@ -534,11 +477,8 @@ namespace Ravenfield.EchoProbe
             // handle shock mute/muffle
             UpdateShockAudio(Time.unscaledDeltaTime);
             
-            // Handle tinnitus effect - ONLY if enabled in config
-            if (cfg_enableTinnitus.Value)
-            {
-                UpdateTinnitus(Time.unscaledDeltaTime);
-            }
+            // Handle tinnitus effect
+            UpdateTinnitus(Time.unscaledDeltaTime);
 
             if (Time.unscaledTime >= infoNextLog)
             {
@@ -550,74 +490,6 @@ namespace Ravenfield.EchoProbe
         }
 
         // ---------------- Reverb Core ----------------
-
-        // NEW: Detect if player is in spectator mode - fixes muffled audio when spectating
-        private bool DetectSpectatorMode()
-        {
-            Camera mainCam = Camera.main;
-            if (mainCam != null)
-            {
-                // If camera has no rigidbody or character controller nearby, likely spectating
-                Collider nearbyCollider = Physics.OverlapSphere(mainCam.transform.position, 2f).FirstOrDefault(c => 
-                    c.GetComponent<CharacterController>() != null || c.GetComponent<Rigidbody>() != null);
-                
-                if (nearbyCollider == null)
-                {
-                    return true;
-                }
-            }
-            
-            // Check if listener is moving at unrealistic speeds (spectator camera behavior)
-            if (listenerVel.magnitude > 50f)
-            {
-                return true;
-            }
-            
-            return false;
-        }
-        
-        // NEW: Restore all audio to normal when spectating
-        private void RestoreAllAudioToNormal()
-        {
-            // Restore listener volume
-            AudioListener.volume = Mathf.MoveTowards(AudioListener.volume, originalListenerVolume, 5f * Time.unscaledDeltaTime);
-            
-            // Disable lowpass filter
-            if (lowpass != null)
-            {
-                lowpass.cutoffFrequency = Mathf.MoveTowards(lowpass.cutoffFrequency, 22000f, 5000f * Time.unscaledDeltaTime);
-            }
-            
-            // Restore all tracked sources to original volume
-            foreach (var src in trackedSources)
-            {
-                if (src != null)
-                {
-                    float orig = originalSourceVolume.ContainsKey(src) ? originalSourceVolume[src] : 1f;
-                    src.volume = Mathf.MoveTowards(src.volume, orig, 5f * Time.unscaledDeltaTime);
-                    src.pitch = Mathf.MoveTowards(src.pitch, 1f, 3f * Time.unscaledDeltaTime);
-                    
-                    // Remove any lowpass filters we added
-                    var srcLowpass = src.GetComponent<AudioLowPassFilter>();
-                    if (srcLowpass != null)
-                    {
-                        srcLowpass.cutoffFrequency = 22000f;
-                    }
-                }
-            }
-            
-            // Stop tinnitus if playing
-            if (tinnitusSource != null && tinnitusSource.isPlaying)
-            {
-                tinnitusSource.Stop();
-            }
-            
-            // Reset reverb to minimal
-            if (reverb != null)
-            {
-                reverb.reverbLevel = Mathf.MoveTowards(reverb.reverbLevel, cfg_minReverbLevel.Value, 100f * Time.unscaledDeltaTime);
-            }
-        }
 
         private System.Collections.IEnumerator LoadAudioClip(string filePath)
         {
@@ -1038,14 +910,6 @@ namespace Ravenfield.EchoProbe
             {
                 AudioSource src = trackedSources[i];
                 if (src == null) continue;
-
-                // NEW: Skip excluded sources (player's own weapons, vehicle weapons, etc.)
-                if (ShouldExcludeSource(src))
-                {
-                    RestoreSourceVolume(src);
-                    ApplyDopplerToSource(src, Vector3.zero, listenerVel, 1.0f, 0f);
-                    continue;
-                }
 
                 // compute estimated source velocity
                 Vector3 prevPos = prevSourcePos.ContainsKey(src) ? prevSourcePos[src] : src.transform.position;
