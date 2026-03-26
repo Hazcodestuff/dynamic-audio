@@ -1,7 +1,10 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus
-// Version: 5.5.0 - CRITICAL FIXES: Fixed missing reverb in enclosed spaces (dryLevel/wetLevel), fixed APC autocannon sound sync (only delay impulsive sounds, not continuous fire), improved wall occlusion detection.
+// Version: 5.6.0 - STABILITY RELEASE: Disabled buggy experimental features by default (Sound Delay, Wall Occlusion, Distance Calculator). 
+//               Re-enabled reverb in enclosed spaces. Fixed APC autocannon sound sync issues.
+// WARNING: This mod has known issues with rapid-fire weapons and may cause audio muffling. 
+//          Enable experimental features at your own risk. Check config for warnings.
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -16,7 +19,7 @@ using System;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.5.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "5.6.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -223,7 +226,7 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.5.0 - CRITICAL FIXES");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V5.6.0 - STABILITY RELEASE (Experimental features disabled by default)");
             
             SetupConfig();
             
@@ -301,11 +304,14 @@ namespace Ravenfield.EchoProbe
             cfg_flybyDecaySeconds = Config.Bind("Flyby", "Decay Duration", 0.35f, "Duration for flyby effect to fade (seconds).");
             
             // Sound Delay Simulation - ROBUST IMPLEMENTATION
-            cfg_enableSoundDelay = Config.Bind("SoundDelay", "Enable Sound Delay", true, "Simulate light traveling faster than sound (see explosion before hearing it). Works best with distances > 10m.");
+            cfg_enableSoundDelay = Config.Bind("SoundDelay", "Enable Sound Delay", false, "[EXPERIMENTAL - MAY CAUSE SOUND SYNC ISSUES] Simulate light traveling faster than sound (see explosion before hearing it). DISABLED BY DEFAULT due to reported bugs with rapid-fire weapons. Enable at your own risk. Works best with distances > 10m.");
             cfg_soundSpeed = Config.Bind("SoundDelay", "Sound Speed", 343f, "Speed of sound in m/s. Lower values = longer delays. Try 50-100 for dramatic effect, 343 for realism.");
             cfg_maxSoundDelay = Config.Bind("SoundDelay", "Max Delay", 5.0f, "Maximum sound delay (seconds) to prevent excessive delays.");
             cfg_lightSpeedThreshold = Config.Bind("SoundDelay", "Light Speed Threshold", 5f, "Minimum distance (meters) before sound delay kicks in. Lower = delay starts closer.");
             cfg_soundDelayMinDistance = Config.Bind("SoundDelay", "Min Distance for Delay", 3f, "Sounds closer than this won't have delay (prevents weirdness with nearby sounds).");
+            
+            // WARNING: Sound delay and wall occlusion are experimental features that may cause audio synchronization issues with certain weapons (especially rapid-fire weapons like APC autocannons). If you experience sound problems, disable these features.
+            Logger.LogWarning("[DynamicAudio] WARNING: Sound Delay is DISABLED by default due to reported sync issues with rapid-fire weapons. Enable only if you understand the risks.");
             
             // Air Absorption
             cfg_enableAirAbsorption = Config.Bind("AirAbsorption", "Enable Air Absorption", true, "High frequencies are absorbed over distance (affected by humidity/temp).");
@@ -320,15 +326,17 @@ namespace Ravenfield.EchoProbe
             cfg_environmentalStrength = Config.Bind("Environment", "Environmental Strength", 0.8f, "Overall strength of environmental audio effects (0-1).");
 
             // NEW: Distance Calculator & Wall Occlusion (v4.0.0) - ENHANCED
-            cfg_enableDistanceCalculator = Config.Bind("DistanceCalculator", "Enable Distance Calculator", true, "Calculate exact distance to all playing audio cues for accurate light vs sound simulation.");
+            cfg_enableDistanceCalculator = Config.Bind("DistanceCalculator", "Enable Distance Calculator", false, "[EXPERIMENTAL - MAY CAUSE SOUND SYNC ISSUES] Calculate exact distance to all playing audio cues for accurate light vs sound simulation. DISABLED BY DEFAULT due to reported bugs.");
             cfg_distanceCheckInterval = Config.Bind("DistanceCalculator", "Check Interval", 0.03f, "How often to update distance calculations (seconds). Lower = more accurate but higher CPU usage.");
             cfg_maxTrackedCues = Config.Bind("DistanceCalculator", "Max Tracked Cues", 64, "Maximum number of audio cues to track simultaneously.");
-            cfg_enableWallOcclusion = Config.Bind("WallOcclusion", "Enable Wall Occlusion", true, "Detect walls between player and sound sources to muffle sounds behind walls.");
+            cfg_enableWallOcclusion = Config.Bind("WallOcclusion", "Enable Wall Occlusion", false, "[EXPERIMENTAL - MAY CAUSE MUFFLING ISSUES] Detect walls between player and sound sources to muffle sounds behind walls. DISABLED BY DEFAULT due to reported muffling bugs.");
             cfg_wallRays = Config.Bind("WallOcclusion", "Wall Rays", 32, "Number of rays to cast around player for wall detection. Higher = more accurate wall detection.");
             cfg_wallRayDistance = Config.Bind("WallOcclusion", "Wall Ray Distance", 25f, "Distance to check for walls around player (meters).");
             cfg_wallMuffleAmount = Config.Bind("WallOcclusion", "Wall Muffle Amount", 0.15f, "Volume multiplier when sound is blocked by a wall (0 = silent, 1 = no change). Lower = more muffled.");
             cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, environment, all");
             cfg_occlusionLayerMask = Config.Bind("WallOcclusion", "Occlusion Layer Mask", -1, "Layer mask for occlusion raycasts. -1 = everything, use layer numbers for filtering.");
+            
+            Logger.LogWarning("[DynamicAudio] WARNING: Wall Occlusion is DISABLED by default due to reported muffling issues. Enable only if you understand the risks.");
             
             // NEW: Exclusion lists - prevents muffling of player's own weapons and vehicle weapons
             Config.Bind("Exclusions", "_categoryDescription", "", "These settings prevent the mod from affecting your own weapons and nearby sounds. Add tags/layers used by vehicles or specific weapons if they're being muffled incorrectly.");
@@ -391,9 +399,13 @@ namespace Ravenfield.EchoProbe
             if (!reverb) reverb = listener.gameObject.AddComponent<AudioReverbFilter>();
 
             reverb.reverbPreset = AudioReverbPreset.User;
-            reverb.dryLevel = 1f; // FIXED: Must be 1 to hear original sound + reverb
+            reverb.dryLevel = 1f; // Must be 1 to hear original sound + reverb
             reverb.diffusion = 100f;
             reverb.density = 100f;
+            reverb.room = 0; // Initialize room size
+            reverb.reverbLevel = -100f; // Initialize with minimal reverb (will be updated in probe)
+            reverb.reflectionsDelay = 0.01f; // Initialize reflections delay
+            reverb.reverbDelay = 0.02f; // Initialize reverb delay
 
             if (!lowpass) lowpass = listener.GetComponent<AudioLowPassFilter>();
             if (!lowpass) lowpass = listener.gameObject.AddComponent<AudioLowPassFilter>();
@@ -456,7 +468,7 @@ namespace Ravenfield.EchoProbe
             curRefDel = tgtRefDel = 0.03f;
             Apply();
 
-            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass + tinnitus generator (Dynamic Audio V5.5.0 - CRITICAL FIXES).");
+            Logger.LogInfo("[DynamicAudio] Ready: reverb(User) + lowpass + tinnitus generator (Dynamic Audio V5.6.0 - STABILITY RELEASE).");
             // initial scan for audio sources
             ScanAudioSources();
         }
@@ -630,10 +642,12 @@ namespace Ravenfield.EchoProbe
                 tinnitusSource.Stop();
             }
             
-            // Reset reverb to minimal
+            // Reset reverb to minimal when spectating
             if (reverb != null)
             {
-                reverb.reverbLevel = Mathf.MoveTowards(reverb.reverbLevel, cfg_minReverbLevel.Value, 100f * Time.unscaledDeltaTime);
+                reverb.reverbLevel = cfg_minReverbLevel.Value; // Set directly instead of lerping for instant restore
+                reverb.decayTime = cfg_minDecay.Value;
+                reverb.room = (int)cfg_minRoomMb.Value;
             }
         }
 
