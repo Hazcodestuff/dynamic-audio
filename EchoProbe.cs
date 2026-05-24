@@ -494,13 +494,13 @@ namespace Ravenfield.EchoProbe
         private System.Collections.IEnumerator LoadAudioClip(string filePath)
         {
             // Use UnityWebRequest to load audio file asynchronously
-            using (var www = UnityWebRequestMultimedia.GetAudioClip("file://" + filePath, AudioType.UNKNOWN))
+            using (var www = UnityEngine.Networking.UnityWebRequest.GetAudioClip("file://" + filePath, UnityEngine.AudioType.UNKNOWN))
             {
                 yield return www.SendWebRequest();
                 
-                if (www.result == UnityWebRequest.Result.Success)
+                if (www.result == UnityEngine.Networking.UnityWebRequest.Result.Success)
                 {
-                    AudioClip clip = DownloadHandlerAudioClip.GetContent(www);
+                    AudioClip clip = UnityEngine.Networking.DownloadHandlerAudioClip.GetContent(www);
                     if (clip != null)
                     {
                         tinnitusClip = clip;
@@ -883,8 +883,49 @@ namespace Ravenfield.EchoProbe
                     sourceVel[a] = Vector3.zero;
                 if (!flybyTimers.ContainsKey(a))
                     flybyTimers[a] = 0f;
+                    
+                // initialize sound delay tracking
+                if (!soundDelayTimers.ContainsKey(a))
+                    soundDelayTimers[a] = 0f;
+                if (!soundPlayed.ContainsKey(a))
+                    soundPlayed[a] = true;
+                if (!lastKnownVolume.ContainsKey(a))
+                    lastKnownVolume[a] = a.volume;
             }
+            
+            // Clean up dictionaries for destroyed/null sources
+            CleanupDeadSources();
+            
             Logger.LogInfo("[DynamicAudio] Scanned audio sources, tracked: " + trackedSources.Count);
+        }
+        
+        /// <summary>
+        /// Remove entries from tracking dictionaries for sources that no longer exist.
+        /// Prevents memory leaks and null reference exceptions.
+        /// </summary>
+        private void CleanupDeadSources()
+        {
+            var keysToRemove = new List<AudioSource>();
+            
+            // Check originalSourceVolume
+            foreach (var kvp in originalSourceVolume)
+            {
+                if (kvp.Key == null || !trackedSources.Contains(kvp.Key))
+                    keysToRemove.Add(kvp.Key);
+            }
+            foreach (var key in keysToRemove)
+            {
+                originalSourceVolume.Remove(key);
+                prevSourcePos.Remove(key);
+                sourceVel.Remove(key);
+                flybyTimers.Remove(key);
+                soundDelayTimers.Remove(key);
+                soundPlayed.Remove(key);
+                lastKnownVolume.Remove(key);
+                audioCueDistances.Remove(key);
+                wallOcclusionFactors.Remove(key);
+            }
+            keysToRemove.Clear();
         }
 
         private void CheckSourcesOcclusionAndDoppler()
@@ -1084,7 +1125,8 @@ namespace Ravenfield.EchoProbe
                 // This is more reliable than isPlaying which can have timing issues
                 float currentVol = src.volume;
                 bool wasPlayingLastFrame = soundPlayed.ContainsKey(src) && soundPlayed[src];
-                bool volumeRising = currentVol > 0.01f && lastKnownVolume.ContainsKey(src) && lastKnownVolume[src] < 0.01f;
+                bool lastVolLow = lastKnownVolume.ContainsKey(src) && lastKnownVolume[src] < 0.01f;
+                bool volumeRising = currentVol > 0.01f && lastVolLow;
                 bool isNewSound = !wasPlayingLastFrame && (src.isPlaying || volumeRising);
                 
                 // Also detect new sounds by checking if timer expired and sound is still playing
