@@ -1,7 +1,7 @@
 ﻿// EchoProbe.cs
 // BepInEx plugin for Ravenfield — TOF reverb + per-source occlusion + Doppler/flyby + material early-reflection boost
 // + Sound delay simulation (light vs sound) + Air absorption + Environmental effects + Tinnitus
-// Version: 6.0.0 - REVERTED TO BACKUP: All experimental features disabled by default, only reverb enabled.
+// Version: 6.1.0 - IMPROVED: Fixed outdoor occlusion false positives ("toilet effect") + Extended distance rolloff for better long-range audio
 // C# 7.3 compatible.
 
 using BepInEx;
@@ -16,7 +16,7 @@ using System;
 
 namespace Ravenfield.EchoProbe
 {
-    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "6.0.0")]
+    [BepInPlugin("dynamic.audio", "Dynamic Audio (Immersive Sound Physics)", "6.1.0")]
     public class EchoProbePlugin : BaseUnityPlugin
     {
         // ---------------- Configuration ----------------
@@ -104,6 +104,12 @@ namespace Ravenfield.EchoProbe
         private ConfigEntry<float> cfg_wallMuffleAmount;
         private ConfigEntry<string> cfg_debugMode;
         private ConfigEntry<int> cfg_occlusionLayerMask;
+        
+        // NEW: Distance-based rolloff fix configuration
+        private ConfigEntry<bool> cfg_enableDistanceRolloffFix;
+        private ConfigEntry<float> cfg_customMaxDistance;
+        private ConfigEntry<float> cfg_customMinDistance;
+        private ConfigEntry<string> cfg_rolloffMode;
 
         // Material early-reflection boost (optional)
         // tags map: tag -> early reflection multiplier
@@ -193,7 +199,7 @@ namespace Ravenfield.EchoProbe
 
         private void Awake()
         {
-            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V6.0.0 - Reverb ONLY enabled, all other features disabled and marked as EXPERIMENTAL");
+            Logger.LogInfo("[DynamicAudio] Initializing Dynamic Audio V6.1.0 - IMPROVED: Fixed outdoor occlusion false positives and extended distance rolloff for natural long-range audio");
             
             SetupConfig();
             
@@ -298,6 +304,12 @@ namespace Ravenfield.EchoProbe
             cfg_wallMuffleAmount = Config.Bind("WallOcclusion", "Wall Muffle Amount", 0.15f, "Volume multiplier when sound is blocked by a wall (0 = silent, 1 = no change). Lower = more muffled.");
             cfg_debugMode = Config.Bind("Debug", "Debug Mode", "none", "Debug output mode: none, distances, walls, environment, all");
             cfg_occlusionLayerMask = Config.Bind("WallOcclusion", "Occlusion Layer Mask", -1, "Layer mask for occlusion raycasts. -1 = everything, use layer numbers for filtering.");
+            
+            // NEW: Distance-based rolloff fix (addresses user feedback about abrupt sound cutoff)
+            cfg_enableDistanceRolloffFix = Config.Bind("RolloffFix", "Enable Distance Rolloff Fix", true, "Override Unity's default audio rolloff to prevent abrupt sound cutoff at distance. Sounds will fade more naturally over longer distances.");
+            cfg_customMaxDistance = Config.Bind("RolloffFix", "Custom Max Distance", 150f, "Maximum distance at which sounds can still be heard (meters). Increase this if you want to hear distant gunfights and explosions.");
+            cfg_customMinDistance = Config.Bind("RolloffFix", "Custom Min Distance", 10f, "Distance at which sounds start to attenuate (meters). Sounds within this range play at full volume.");
+            cfg_rolloffMode = Config.Bind("RolloffFix", "Rolloff Mode", "Logarithmic", "Audio rolloff mode: Linear, Logarithmic, Custom. Logarithmic is most realistic for outdoor environments.");
         }
 
         private void OnSceneLoaded(Scene s, LoadSceneMode m)
@@ -891,6 +903,12 @@ namespace Ravenfield.EchoProbe
                     soundPlayed[a] = true;
                 if (!lastKnownVolume.ContainsKey(a))
                     lastKnownVolume[a] = a.volume;
+                
+                // NEW: Apply distance rolloff fix to prevent abrupt sound cutoff
+                if (cfg_enableDistanceRolloffFix.Value)
+                {
+                    ApplyCustomRolloff(a);
+                }
             }
             
             // Clean up dictionaries for destroyed/null sources
@@ -973,16 +991,30 @@ namespace Ravenfield.EchoProbe
                 // skip not playing sources
                 if (!src.isPlaying) { RestoreSourceVolume(src); ApplyDopplerToSource(src, smoothed, listenerVel, 1.0f, 0f); continue; }
 
-                // Quick same-room heuristic
+                // Quick same-room heuristic - IMPROVED: More conservative to prevent false positives in open areas
                 float srcEnclosure = QuickLocalEnclosure(src.transform.position);
-                bool sameRoom = Mathf.Abs(srcEnclosure - lastEnclosure) < 0.22f && Mathf.Abs(Vector3.Distance(src.transform.position, ear.position) - lastAvgDist) < (lastAvgDist * 0.6f + 1f);
+                bool bothInOpen = lastOpenSky > 0.7f && srcEnclosure < 0.3f; // Both source and listener are in open area
+                bool sameRoom = !bothInOpen && Mathf.Abs(srcEnclosure - lastEnclosure) < 0.15f && Mathf.Abs(Vector3.Distance(src.transform.position, ear.position) - lastAvgDist) < (lastAvgDist * 0.4f + 2f);
 
                 // Direct LOS test: if there is clear line, no occlusion
                 Vector3 dir = (ear.position - src.transform.position).normalized;
                 RaycastHit hitInfo;
                 bool hasObstacle = Physics.Raycast(src.transform.position + dir * 0.02f, dir, out hitInfo, d - 0.04f, ~0, QueryTriggerInteraction.Ignore);
 
-                if (!hasObstacle || sameRoom)
+                // IMPROVED: In open areas, require more certain occlusion before applying muffling
+                // This prevents the "toilet effect" where sounds rapidly muffle/unmuffle in open terrain
+                bool shouldApplyOcclusion = hasObstacle && !sameRoom;
+                
+                // Extra check: if both are in open area with high sky visibility, skip occlusion unless there's a solid wall
+                if (bothInOpen && hasObstacle)
+                {
+                    // Check if the obstacle is a significant wall (not just terrain bump)
+                    // Only apply occlusion if the hit normal suggests a vertical surface (wall) rather than ground
+                    float hitNormalY = Mathf.Abs(hitInfo.normal.y);
+                    shouldApplyOcclusion = hitNormalY < 0.5f; // Wall-like surface (normal points sideways, not up)
+                }
+
+                if (!shouldApplyOcclusion)
                 {
                     // no blocking geometry or same room -> restore volume
                     RestoreSourceVolume(src);
@@ -1417,6 +1449,69 @@ namespace Ravenfield.EchoProbe
             if (wallOcclusionFactors.ContainsKey(src))
                 return wallOcclusionFactors[src];
             return 1.0f;
+        }
+        
+        /// <summary>
+        /// Apply custom audio rolloff settings to prevent abrupt sound cutoff at distance.
+        /// This addresses user feedback about sounds cutting off too drastically at specific distances.
+        /// </summary>
+        private void ApplyCustomRolloff(AudioSource src)
+        {
+            if (src == null) return;
+            
+            // Set custom rolloff mode for more natural distance attenuation
+            // Logarithmic is most realistic for outdoor environments
+            AudioRolloffMode rolloffMode = AudioRolloffMode.Logarithmic;
+            if (cfg_rolloffMode.Value == "Linear")
+                rolloffMode = AudioRolloffMode.Linear;
+            else if (cfg_rolloffMode.Value == "Custom")
+                rolloffMode = AudioRolloffMode.CustomRolloff;
+            
+            src.rolloffMode = rolloffMode;
+            
+            // Set custom min/max distances to extend hearing range
+            // This allows players to hear distant gunfights and explosions
+            src.minDistance = cfg_customMinDistance.Value;
+            src.maxDistance = cfg_customMaxDistance.Value;
+            
+            // For CustomRolloff mode, set up a custom volume curve
+            if (rolloffMode == AudioRolloffMode.CustomRolloff)
+            {
+                src.SetCustomCurve(AudioCurveSourceType.Volume, CreateCustomRolloffCurve());
+            }
+        }
+        
+        /// <summary>
+        /// Create a custom rolloff curve that provides smooth, gradual volume decrease over distance.
+        /// This prevents the abrupt cutoff that occurs with default Unity audio settings.
+        /// </summary>
+        private UnityEngine.AnimationCurve CreateCustomRolloffCurve()
+        {
+            // Create keyframes for smooth rolloff from minDistance to maxDistance
+            Keyframe[] keyframes = new Keyframe[]
+            {
+                new Keyframe(0f, 1f),                                    // At source: full volume
+                new Keyframe(cfg_customMinDistance.Value, 1f),          // At minDistance: still full volume
+                new Keyframe(cfg_customMinDistance.Value * 3f, 0.7f),   // Gradual decrease starts
+                new Keyframe(cfg_customMinDistance.Value * 6f, 0.4f),   // Medium distance: moderate volume
+                new Keyframe(cfg_customMaxDistance.Value * 0.75f, 0.15f), // Far distance: quiet but audible
+                new Keyframe(cfg_customMaxDistance.Value, 0.02f)        // At maxDistance: barely audible
+            };
+            
+            UnityEngine.AnimationCurve curve = new UnityEngine.AnimationCurve(keyframes);
+            
+            // Smooth the transitions between keyframes
+            for (int i = 0; i < keyframes.Length; i++)
+            {
+                curve.ChangeKey(i, new Keyframe(
+                    keyframes[i].time,
+                    keyframes[i].value,
+                    i > 0 ? 0f : 0f,  // Entry tangent
+                    i < keyframes.Length - 1 ? 0f : 0f  // Exit tangent
+                ));
+            }
+            
+            return curve;
         }
     }
 }
