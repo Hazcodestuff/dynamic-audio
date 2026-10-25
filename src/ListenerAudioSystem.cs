@@ -121,7 +121,13 @@ namespace DynamicAudio
             r.Reverb.diffusion = 100f;
             r.Reverb.density = 100f;
             r.Reverb.enabled = false;
+            // Unity's defaults (echo wetMix 1.0 / 500 ms, low-pass 5 kHz) are loud or dull: neutralise them while disabled.
+            r.Echo.wetMix = 0f;
+            r.Echo.dryMix = 1f;
+            r.Echo.delay = 100f;
+            r.Echo.decayRatio = 0.3f;
             r.Echo.enabled = false;
+            r.LowPass.cutoffFrequency = 22000f;
             r.LowPass.enabled = false;
 
             listener = l;
@@ -279,16 +285,17 @@ namespace DynamicAudio
             curRefl = Mathf.MoveTowards(curRefl, tgtRefl, 2500f * step);
             curRefDel = Mathf.MoveTowards(curRefDel, tgtRefDel, 0.5f * step);
 
-            if (rig.Reverb.enabled != reverbWanted) rig.Reverb.enabled = reverbWanted;
+            // Parameters first, THEN enable: a freshly enabled Unity filter starts from its defaults otherwise.
             if (reverbWanted)
             {
                 rig.Reverb.decayTime = curDecay;
                 rig.Reverb.room = Mathf.RoundToInt(Mathf.Clamp(curRoom, -10000f, 0f));
-                rig.Reverb.reverbLevel = Mathf.RoundToInt(Mathf.Clamp(curRev, -10000f, 2000f));
-                rig.Reverb.reflectionsLevel = Mathf.RoundToInt(Mathf.Clamp(curRefl, -10000f, 1000f));
+                rig.Reverb.reverbLevel = Mathf.RoundToInt(Mathf.Clamp(curRev, -10000f, 0f));
+                rig.Reverb.reflectionsLevel = Mathf.RoundToInt(Mathf.Clamp(curRefl, -10000f, 0f));
                 rig.Reverb.reflectionsDelay = curRefDel;
                 rig.Reverb.reverbDelay = Mathf.Clamp(curRefDel * 1.5f, 0.01f, 0.1f);   // Unity range 0-0.1
             }
+            if (rig.Reverb.enabled != reverbWanted) rig.Reverb.enabled = reverbWanted;
 
             // The echo filter sits on the listener, i.e. it affects EVERYTHING (reloads, footsteps, UI).
             // So it is event-driven: it only fades in after a loud sound (gunshot/explosion) and fades out
@@ -298,7 +305,6 @@ namespace DynamicAudio
             else echoEnv = Mathf.MoveTowards(echoEnv, 0f, dt * (echoSuppress > 0f ? 5f : 1.1f));
 
             bool echoOn = echoWanted && echoEnv > 0.03f;
-            if (rig.Echo.enabled != echoOn) rig.Echo.enabled = echoOn;
             if (echoOn)
             {
                 bool tunnel = currentRoom.Type == RoomType.Tunnel;
@@ -307,6 +313,7 @@ namespace DynamicAudio
                 rig.Echo.wetMix = (tunnel ? 0.18f : 0.10f) * echoEnv;
                 rig.Echo.dryMix = 1f;
             }
+            if (rig.Echo.enabled != echoOn) rig.Echo.enabled = echoOn;
 
             float cutoff = 22000f;
             if (shockActive)
@@ -319,8 +326,8 @@ namespace DynamicAudio
             if (TinnitusCutoff < cutoff) cutoff = TinnitusCutoff;
 
             bool lpOn = cutoff < 19500f;
-            if (rig.LowPass.enabled != lpOn) rig.LowPass.enabled = lpOn;
             if (lpOn) rig.LowPass.cutoffFrequency = Mathf.Clamp(cutoff, 200f, 22000f);
+            if (rig.LowPass.enabled != lpOn) rig.LowPass.enabled = lpOn;
         }
     }
 }

@@ -5,7 +5,8 @@
 // off (distant gunshots vanished), and every filter allocated several MB on the audio thread.
 //
 // This version delays the START of a sound instead, by hooking AudioSource.Play / PlayOneShot with Harmony
-// (bundled with BepInEx 5). It is OFF by default. Define NO_HARMONY in the project to compile it out.
+// (bundled with BepInEx 5) and starting a temporary copy of the source later. It is OFF by default.
+// Define NO_HARMONY in the project to compile it out.
 #if !NO_HARMONY
 using System;
 using System.Collections.Generic;
@@ -16,17 +17,25 @@ using UnityEngine;
 
 namespace DynamicAudio
 {
+    /// <summary>
+    /// The delayed sound is NOT replayed on the game's own (pooled, constantly reused) AudioSource. Instead the
+    /// call is cancelled and a short-lived copy of the source is created at the shot's position and started
+    /// when the sound "arrives". The game's source is never touched afterwards, so pooled sources being
+    /// recycled, moved or re-volumed during the delay can no longer cause loud/misplaced/doubled sounds.
+    /// The timing uses game time, so it freezes with the pause menu.
+    /// </summary>
     internal static class TravelDelay
     {
-        private struct Pending
+        private sealed class Pending
         {
+            public GameObject Go;
             public AudioSource Source;
-            public AudioClip Clip;
-            public float Volume;
             public float DueTime;
+            public float DestroyAt;     // set once started
+            public bool Started;
         }
 
-        private const int MaxPending = 96;
+        private const int MaxPending = 40;
         private static readonly List<Pending> queue = new List<Pending>(MaxPending);
         private static Harmony harmony;
         private static bool bypass;
@@ -69,12 +78,14 @@ namespace DynamicAudio
             Installed = false;
         }
 
-        private static bool ShouldDelay(AudioSource src, out float delay)
+        private static bool ShouldDelay(AudioSource src, out float delay, out SoundCategory cat)
         {
             delay = 0f;
+            cat = SoundCategory.Other;
             DynamicAudioPlugin p = DynamicAudioPlugin.Instance;
             if (p == null || !p.TravelDelayActive) return false;
-            if (src == null || !src.isActiveAndEnabled || src.spatialBlend < 0.5f) return false;
+            if (src == null || !src.isActiveAndEnabled || src.spatialBlend < 0.5f || src.loop) return false;
+            if (queue.Count >= MaxPending) return false;
             if (p.IsDelayExempt(src)) return false;        // own gun / own vehicle / reload sounds
             Transform ear = p.Ear;
             if (ear == null) return false;
@@ -82,8 +93,9 @@ namespace DynamicAudio
             float d = Vector3.Distance(ear.position, src.transform.position);
             if (d <= p.cfgSoundDelayMinDistance.Value) return false;
 
-            SoundCategory cat = p.ClassifyCached(src);
-            if (cat == SoundCategory.Footstep || cat == SoundCategory.Environment || cat == SoundCategory.Other) return false;
+            cat = p.ClassifyCached(src);
+            // Only the big, distant bangs are delayed: shots and explosions.
+            if (cat != SoundCategory.Gunshot && cat != SoundCategory.Explosion) return false;
             if (!p.CategoryEnabled(cat)) return false;
 
             float speed = Mathf.Max(50f, p.cfgSoundSpeed.Value);
@@ -95,13 +107,13 @@ namespace DynamicAudio
         {
             try
             {
-                if (bypass) return true;
+                if (bypass || __instance == null) return true;
+                AudioClip clip = __instance.clip;
+                if (clip == null) return true;
                 float delay;
-                if (!ShouldDelay(__instance, out delay)) return true;
-                bypass = true;
-                try { __instance.PlayDelayed(delay); }
-                finally { bypass = false; }
-                return false;
+                SoundCategory cat;
+                if (!ShouldDelay(__instance, out delay, out cat)) return true;
+                return !Defer(__instance, clip, 1f, delay, cat);
             }
             catch (Exception)
             {
@@ -119,26 +131,71 @@ namespace DynamicAudio
             return Enqueue(__instance, __0, 1f);
         }
 
-        // Returns true to let the original run, false when the sound was queued for later.
+        // Returns true to let the original run, false when the sound was deferred.
         private static bool Enqueue(AudioSource src, AudioClip clip, float volume)
         {
             try
             {
-                if (bypass || clip == null) return true;
-                if (queue.Count >= MaxPending) return true;
+                if (bypass || clip == null || src == null) return true;
                 float delay;
-                if (!ShouldDelay(src, out delay)) return true;
-                Pending p = new Pending();
-                p.Source = src;
-                p.Clip = clip;
-                p.Volume = volume;
-                p.DueTime = Time.time + delay;
-                queue.Add(p);
-                return false;
+                SoundCategory cat;
+                if (!ShouldDelay(src, out delay, out cat)) return true;
+                return !Defer(src, clip, volume, delay, cat);
             }
             catch (Exception)
             {
                 return true;
+            }
+        }
+
+        /// <summary>Creates the delayed copy. Returns false (nothing happened) if anything goes wrong.</summary>
+        private static bool Defer(AudioSource src, AudioClip clip, float volume, float delay, SoundCategory cat)
+        {
+            GameObject go = null;
+            try
+            {
+                go = new GameObject("DynamicAudioDelayed");
+                go.transform.position = src.transform.position;
+                AudioSource a = go.AddComponent<AudioSource>();
+                a.playOnAwake = false;
+                a.loop = false;
+                a.clip = clip;
+                a.volume = Mathf.Clamp01(src.volume * Mathf.Clamp(volume, 0f, 4f));
+                a.pitch = src.pitch;
+                a.outputAudioMixerGroup = src.outputAudioMixerGroup;
+                a.spatialBlend = src.spatialBlend;
+                a.spread = src.spread;
+                a.dopplerLevel = src.dopplerLevel;
+                a.minDistance = src.minDistance;
+                a.maxDistance = src.maxDistance;
+                a.rolloffMode = src.rolloffMode;
+                a.priority = src.priority;
+                a.reverbZoneMix = src.reverbZoneMix;
+                a.bypassEffects = src.bypassEffects;
+                a.bypassListenerEffects = src.bypassListenerEffects;
+                a.bypassReverbZones = src.bypassReverbZones;
+                a.ignoreListenerPause = src.ignoreListenerPause;
+                if (src.rolloffMode == AudioRolloffMode.Custom)
+                {
+                    AnimationCurve c = src.GetCustomCurve(AudioSourceCurveType.CustomRolloff);
+                    if (c != null) a.SetCustomCurve(AudioSourceCurveType.CustomRolloff, c);
+                }
+
+                DynamicAudioPlugin p = DynamicAudioPlugin.Instance;
+                if (p != null) p.RegisterCategory(a, cat);
+
+                go.SetActive(false);      // dormant until the sound "arrives"
+                Pending pd = new Pending();
+                pd.Go = go;
+                pd.Source = a;
+                pd.DueTime = Time.time + delay;
+                queue.Add(pd);
+                return true;
+            }
+            catch (Exception)
+            {
+                if (go != null) UnityEngine.Object.Destroy(go);
+                return false;
             }
         }
 
@@ -148,29 +205,42 @@ namespace DynamicAudio
             for (int i = queue.Count - 1; i >= 0; i--)
             {
                 Pending p = queue[i];
-                if (now < p.DueTime) continue;
-                queue.RemoveAt(i);
-                PlayNow(p);
+                if (p.Go == null)
+                {
+                    queue.RemoveAt(i);
+                    continue;
+                }
+                if (!p.Started)
+                {
+                    if (now < p.DueTime) continue;
+                    p.Started = true;
+                    float len = (p.Source.clip != null ? p.Source.clip.length : 1f) / Mathf.Max(0.1f, Mathf.Abs(p.Source.pitch));
+                    p.DestroyAt = now + len + 0.5f;
+                    bypass = true;
+                    try
+                    {
+                        p.Go.SetActive(true);
+                        p.Source.Play();
+                    }
+                    catch (Exception) { }
+                    finally { bypass = false; }
+                }
+                else if (now >= p.DestroyAt)
+                {
+                    UnityEngine.Object.Destroy(p.Go);
+                    queue.RemoveAt(i);
+                }
             }
         }
 
+        /// <summary>Drops everything pending (master switch off, pause, shutdown). Stale sounds are discarded, not played late.</summary>
         public static void Flush()
         {
             for (int i = queue.Count - 1; i >= 0; i--)
             {
-                Pending p = queue[i];
-                queue.RemoveAt(i);
-                PlayNow(p);
+                if (queue[i].Go != null) UnityEngine.Object.Destroy(queue[i].Go);
             }
-        }
-
-        private static void PlayNow(Pending p)
-        {
-            if (p.Source == null || p.Clip == null || !p.Source.isActiveAndEnabled) return;
-            bypass = true;
-            try { p.Source.PlayOneShot(p.Clip, p.Volume); }
-            catch (Exception) { }
-            finally { bypass = false; }
+            queue.Clear();
         }
     }
 }

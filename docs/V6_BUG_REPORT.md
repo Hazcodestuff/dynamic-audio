@@ -69,3 +69,14 @@ Issues reported after the first 1.5.0 test, and their fixes:
 | Tinnitus "extremely sensitive" | Low explosion threshold, fast exposure build-up, long rings, loud tone, no rest time. | Radius 25 > 12 m, sensitivity 1 > 0.5, exposure rates cut 2-3x, rings 2-7 s instead of up to 14 s, tone 0.35 > 0.2, wall between blast and listener halves severity, new `Cooldown` (30 s). |
 | Mod menu only on F11 | n/a | `GameMenuIntegration` clones the game's OPTIONS button (ESC > OPTIONS > DYNAMIC AUDIO) with an IMGUI fallback; `EventSystem` is paused while the window is open so clicks don't leak through. |
 | Muffles could be better | Linear cutoff sweep; no indoor/outdoor awareness. | Log-scale cutoff sweep, extra muffle for roofed-over emitters, smoother low-pass transitions. |
+
+---
+
+## Addendum: 1.5.1
+
+| Report | Root cause | Fix |
+|---|---|---|
+| Pausing (ESC) made the audio stutter / repeat a few frames and drone | Our listener-level filters (reverb/echo/low-pass) and per-source filters stayed active on an audio graph that is paused; filters fed a stale buffer loop it. | While `Time.timeScale` is 0 or `AudioListener.pause` is set, every filter of ours is switched off and the simulation is skipped; it restarts on resume. |
+| Sudden +10 dB jumps (distant vehicle suddenly "in front of me", also guns) | Sounds that were attenuated/muffled were released or re-evaluated and their gain snapped to 1 (sound-budget eviction, occlusion-ray flicker). A newly enabled Unity filter could also start from its loud defaults (echo wet mix 1.0, 5 kHz low-pass) for a moment. | Gain and cutoff now move gradually in dB (open 10 dB/s, close 45 dB/s). Releasing a sound fades it back over a moment; a re-tracked sound adopts the fading filter. Filter parameters are written before the filter is enabled; own filters start at neutral values. |
+| Travel delay "freaks out" with many sounds | The delayed one-shot was replayed later on the game's pooled AudioSource, which may by then have moved/changed volume/been reused. | Delayed sounds are now a temporary copy created at the shot's position, started at due time (game time). Only gunshots/explosions, never loops, hard queue cap, nothing while paused. |
+| Request: simple mode | n/a | `Sigma Mode`: reverb only. Never attaches anything to game sounds. |

@@ -12,7 +12,7 @@ namespace DynamicAudio
     {
         public const string PluginGuid = "lexge.dynamicaudio";
         public const string PluginName = "Dynamic Audio";
-        public const string PluginVersion = "1.5.0";
+        public const string PluginVersion = "1.5.1";
 
         private const int CurrentConfigVersion = 3;
         private const float PollInterval = 0.05f;
@@ -25,6 +25,7 @@ namespace DynamicAudio
 
         // ---- config (public: used by SettingsUi / TravelDelay)
         public ConfigEntry<bool> cfgEnabled;
+        public ConfigEntry<bool> cfgSigmaMode;
         public ConfigEntry<float> cfgMaxSoundDistance;
         public ConfigEntry<KeyboardShortcut> cfgMenuKey;
         public ConfigEntry<bool> cfgOcclusionEnabled;
@@ -89,12 +90,10 @@ namespace DynamicAudio
             public bool MixerOwn;
             public bool WeaponLooked;
             public Weapon Weapon;
-        }
-
-        private struct PendingDisable
-        {
-            public AcousticGainFilter Target;
-            public float At;
+            public bool HasLast;
+            public float LastGain = 1f;
+            public float LastCutoff = 22000f;
+            public float LastAt;
         }
 
         private readonly List<TrackedSound> tracked = new List<TrackedSound>(32);
@@ -102,7 +101,7 @@ namespace DynamicAudio
         private readonly Dictionary<AudioSource, SrcState> states = new Dictionary<AudioSource, SrcState>(256);
         private readonly List<AudioSource> allSources = new List<AudioSource>(256);
         private readonly List<AudioSource> deadKeys = new List<AudioSource>();
-        private readonly List<PendingDisable> pendingDisable = new List<PendingDisable>();
+        private readonly List<TrackedSound> fading = new List<TrackedSound>(16);
         private readonly HashSet<int> ownedLowPass = new HashSet<int>();
         private readonly List<AudioLowPassFilter> lowPassScratch = new List<AudioLowPassFilter>(4);
 
@@ -113,6 +112,7 @@ namespace DynamicAudio
         private float nextLoudSample;
         private float nextShockTime;
         private bool wasEnabled;
+        private bool wasPaused;
         private bool lastUseGameMask;
 
         // ---- failure handling (never touches the config)
@@ -135,9 +135,29 @@ namespace DynamicAudio
         // =====================================================================================
         public Transform Ear { get { return listenerAudio.Ear; } }
 
+        /// <summary>The game is paused (time stopped or audio paused): all of our filters are switched off meanwhile.</summary>
+        public static bool IsPaused
+        {
+            get { return Time.timeScale < 0.01f || AudioListener.pause; }
+        }
+
         public bool TravelDelayActive
         {
-            get { return cfgEnabled != null && cfgEnabled.Value && cfgSoundDelayEnabled.Value && TravelDelay.Installed && Time.time >= safeModeUntil; }
+            get
+            {
+                return cfgEnabled != null && cfgEnabled.Value && !cfgSigmaMode.Value && cfgSoundDelayEnabled.Value
+                    && TravelDelay.Installed && Time.time >= safeModeUntil && !IsPaused;
+            }
+        }
+
+        /// <summary>Lets TravelDelay tag the temporary AudioSource it creates, so it is treated like the original.</summary>
+        public void RegisterCategory(AudioSource src, SoundCategory cat)
+        {
+            if (src == null) return;
+            SrcState st = GetState(src);
+            st.Category = cat;
+            st.Classified = true;
+            st.WeaponLooked = true;
         }
 
         public void LogWarn(string msg)
@@ -249,6 +269,7 @@ namespace DynamicAudio
         private void BindConfig()
         {
             cfgEnabled = BindB("General", "Enabled", true, "Master switch for the whole acoustic simulation. (Never switched off automatically any more.)");
+            cfgSigmaMode = BindB("General", "SigmaMode", false, "SIGMA MODE (simple mode): ONLY the room reverb is active. No muffling, no echo, no shockwave, no tinnitus, no travel delay, and no filters are ever put on game sounds. Pick this if you only want reverb or if you hear any odd audio bugs.");
             cfgMaxSoundDistance = BindF("General", "MaxSoundDistance", 400f, 50f, 2000f, "Sounds farther than this are not simulated at all (meters).");
             cfgMenuKey = Config.Bind<KeyboardShortcut>("General", "MenuKey", new KeyboardShortcut(KeyCode.F11), "Key that opens the in-game Dynamic Audio settings menu.");
 
@@ -388,7 +409,7 @@ namespace DynamicAudio
         {
             try
             {
-                ReleaseAll();
+                ReleaseAll(true);
                 listenerAudio.Shutdown();
                 tinnitus.Shutdown();
                 TravelDelay.Uninstall();
@@ -424,7 +445,26 @@ namespace DynamicAudio
             wasEnabled = true;
 
             float now = Time.time;
-            if (now < safeModeUntil) return;
+
+            // Paused: switch every filter of ours off and do nothing. Filters sitting on a paused audio
+            // graph can loop a stale buffer (stutter / monotone drone), so they must not be alive meanwhile.
+            if (IsPaused)
+            {
+                if (!wasPaused)
+                {
+                    wasPaused = true;
+                    try { EnterPause(); }
+                    catch (Exception e) { RegisterFailure(e); }
+                }
+                return;
+            }
+            wasPaused = false;
+
+            if (now < safeModeUntil)
+            {
+                FadeTick(Time.deltaTime);
+                return;
+            }
 
             try { Simulate(now); }
             catch (Exception e) { RegisterFailure(e); }
@@ -510,14 +550,24 @@ namespace DynamicAudio
                 safeModeUntil = Time.time + 5f;
                 failCount = 0;
                 failWindowStart = now;
-                try { ReleaseAll(); } catch (Exception) { }
+                try { ReleaseAll(false); } catch (Exception) { }
             }
+        }
+
+        private void EnterPause()
+        {
+            ReleaseAll(true);
+            TravelDelay.Flush();
+            listenerAudio.SetActive(false);
+            listenerAudio.Tick(0f);
+            tinnitus.Shutdown();
         }
 
         private void Deactivate()
         {
             wasEnabled = false;
-            ReleaseAll();
+            wasPaused = false;
+            ReleaseAll(true);
             listenerAudio.SetActive(false);
             listenerAudio.Tick(0f);
             tinnitus.Shutdown();
@@ -530,6 +580,7 @@ namespace DynamicAudio
         private void Simulate(float now)
         {
             float dt = Time.deltaTime;
+            bool sigma = cfgSigmaMode.Value;
 
             if (cfgUseGameMask.Value != lastUseGameMask)
             {
@@ -538,11 +589,11 @@ namespace DynamicAudio
                 occlusion.SetMask(m);
                 roomSystem.SetMask(m);
             }
-            if (cfgSoundDelayEnabled.Value) TravelDelay.EnsureInstalled(Logger);
+            if (cfgSoundDelayEnabled.Value && !sigma) TravelDelay.EnsureInstalled(Logger);
             TravelDelay.Tick(now);
 
             listenerAudio.SetActive(true);
-            listenerAudio.Configure(cfgReverbIntensity.Value, cfgRoomSizeMultiplier.Value, cfgEchoEnabled.Value);
+            listenerAudio.Configure(cfgReverbIntensity.Value, cfgRoomSizeMultiplier.Value, cfgEchoEnabled.Value && !sigma);
             listenerAudio.Refresh(now, false);
             tinnitus.SetParams(cfgTinnitusSensitivity.Value, cfgTinnitusRingVolume.Value, cfgTinnitusMuffle.Value, cfgTinnitusCooldown.Value);
 
@@ -550,8 +601,21 @@ namespace DynamicAudio
             if (ear == null)
             {
                 // No active listener right now (camera switch): hand every sound back to the game untouched.
-                if (tracked.Count > 0) ReleaseAll();
-                tinnitus.Update(dt, cfgTinnitusEnabled.Value);
+                if (tracked.Count > 0) ReleaseAll(false);
+                FadeTick(dt);
+                tinnitus.Update(dt, cfgTinnitusEnabled.Value && !sigma);
+                return;
+            }
+
+            if (sigma)
+            {
+                // SIGMA MODE: reverb only. Nothing is ever attached to game sounds.
+                if (tracked.Count > 0) ReleaseAll(false);
+                tinnitus.Update(dt, false);
+                listenerAudio.TinnitusCutoff = 22000f;
+                ProbeRoom(ear.position, now);
+                FadeTick(dt);
+                listenerAudio.Tick(Time.unscaledDeltaTime);
                 return;
             }
 
@@ -569,12 +633,7 @@ namespace DynamicAudio
 
             ScanSources(now);
 
-            if (now >= nextRoomProbe)
-            {
-                nextRoomProbe = now + 0.6f;
-                RoomEstimate room = roomSystem.Probe(earPos);
-                listenerAudio.ApplyRoom(ref room, cfgReverbEnabled.Value);
-            }
+            ProbeRoom(earPos, now);
 
             if (now >= nextPoll)
             {
@@ -585,8 +644,16 @@ namespace DynamicAudio
             }
 
             UpdateTracked(earPos, now, dt);
-            FlushPendingDisable(now);
+            FadeTick(dt);
             listenerAudio.Tick(Time.unscaledDeltaTime);
+        }
+
+        private void ProbeRoom(Vector3 earPos, float now)
+        {
+            if (now < nextRoomProbe) return;
+            nextRoomProbe = now + 0.6f;
+            RoomEstimate room = roomSystem.Probe(earPos);
+            listenerAudio.ApplyRoom(ref room, cfgReverbEnabled.Value);
         }
 
         private void ScanSources(float now)
@@ -715,11 +782,11 @@ namespace DynamicAudio
 
                 if (d < MinTrackDistance) continue;
                 if (trackedMap.ContainsKey(s)) continue;
-                TryTrack(s, cat, d, now);
+                TryTrack(s, cat, d, now, justStarted);
             }
         }
 
-        private void TryTrack(AudioSource s, SoundCategory cat, float dist, float now)
+        private void TryTrack(AudioSource s, SoundCategory cat, float dist, float now, bool fresh)
         {
             // Filters live on the GameObject, so only one tracked source per GameObject (avoids two
             // sources writing conflicting gain/cutoff values into the same filter).
@@ -752,6 +819,30 @@ namespace DynamicAudio
 
             TrackedSound t = new TrackedSound();
             t.Source = s;
+            t.Go = s.gameObject;
+            t.SnapFirst = fresh;
+            SrcState lastSt;
+            if (!fresh && states.TryGetValue(s, out lastSt) && lastSt.HasLast)
+            {
+                if (Time.realtimeSinceStartup - lastSt.LastAt < 30f)
+                {
+                    t.CurrentGain = lastSt.LastGain;
+                    t.CurrentCutoff = lastSt.LastCutoff;
+                }
+                lastSt.HasLast = false;
+            }
+            // A filter of ours may still be fading out on this object: take it over instead of fighting it.
+            for (int i = fading.Count - 1; i >= 0; i--)
+            {
+                TrackedSound o = fading[i];
+                if (o.Go == null) { fading.RemoveAt(i); continue; }
+                if (o.Go != t.Go) continue;
+                t.Gain = o.Gain;
+                t.LowPass = o.LowPass;
+                t.CurrentGain = o.CurrentGain;
+                t.CurrentCutoff = o.CurrentCutoff;
+                fading.RemoveAt(i);
+            }
             t.Category = cat;
             t.Distance = dist;
             t.TrackedSince = now;
@@ -820,7 +911,7 @@ namespace DynamicAudio
                         ProcessSound(t, earPos, interval);
                     }
 
-                    ApplyTracked(t, dt);
+                    ApplyTracked(t, dt, false);
                 }
                 catch (Exception e)
                 {
@@ -868,7 +959,7 @@ namespace DynamicAudio
                 hfLoss = r.MaterialHfLoss;
                 covered = r.SourceCovered;
             }
-            if (t.Processed) ratio = Mathf.Lerp(t.Occlusion, ratio, 0.6f);   // damp ray flicker
+            if (t.Processed) ratio = Mathf.Lerp(t.Occlusion, ratio, ratio < t.Occlusion ? 0.25f : 0.6f);   // damp ray flicker; opening is slower than closing
             t.Occlusion = ratio;
 
             float strength = cfgWallMuffleStrength.Value;
@@ -910,27 +1001,43 @@ namespace DynamicAudio
             t.TargetCutoff = cutoff >= OffCutoff ? 22000f : Mathf.Max(cutoff, 120f);
             if (!t.Processed)
             {
-                t.CurrentGain = t.TargetGain;
-                t.CurrentCutoff = t.TargetCutoff;
+                // A sound that only just started is born with the right level; one that was already
+                // playing is eased in so nothing ever steps abruptly.
+                if (t.SnapFirst)
+                {
+                    t.CurrentGain = t.TargetGain;
+                    t.CurrentCutoff = t.TargetCutoff;
+                }
                 t.Processed = true;
             }
         }
 
-        private void ApplyTracked(TrackedSound t, float dt)
+        private void ApplyTracked(TrackedSound t, float dt, bool fadingOut)
         {
-            if (!t.Processed) return;
-            GameObject go = t.Source.gameObject;
+            if (!t.Processed && !fadingOut) return;
+            GameObject go = t.Go;
+            if (go == null) return;
+            dt = Mathf.Clamp(dt, 0f, 0.1f);
 
-            // gain (audio-thread filter; AudioSource.volume is never touched)
-            t.CurrentGain = Mathf.MoveTowards(t.CurrentGain, t.TargetGain, 5f * dt);
+            // Gain moves in dB: opening up is slow (10 dB/s), closing is quick (45 dB/s). A level can therefore
+            // never jump up suddenly, whatever the occlusion rays or the sound budget do.
+            float tg = Mathf.Max(t.TargetGain, 0.02f);
+            float cg = Mathf.Max(t.CurrentGain, 0.02f);
+            float dbT = 20f * Mathf.Log10(tg);
+            float dbC = 20f * Mathf.Log10(cg);
+            float rate = dbT > dbC ? (fadingOut ? 18f : 10f) : 45f;
+            dbC = Mathf.MoveTowards(dbC, dbT, rate * dt);
+            t.CurrentGain = Mathf.Clamp(Mathf.Pow(10f, dbC / 20f), 0.02f, 1f);
+            if (Mathf.Abs(t.CurrentGain - t.TargetGain) < 0.004f) t.CurrentGain = t.TargetGain;
+
             bool gainNeeded = t.CurrentGain < 0.995f || t.TargetGain < 0.995f;
             if (gainNeeded)
             {
                 if (t.Gain == null) t.Gain = GetOrAddGain(go);
                 if (t.Gain != null)
                 {
-                    if (!t.Gain.enabled) t.Gain.enabled = true;
                     t.Gain.TargetGain = t.CurrentGain;
+                    if (!t.Gain.enabled) t.Gain.enabled = true;
                 }
             }
             else if (t.Gain != null)
@@ -938,10 +1045,11 @@ namespace DynamicAudio
                 t.Gain.TargetGain = 1f;
             }
 
-            // low-pass, smoothed in the log domain
-            float k = 1f - Mathf.Exp(-10f * dt);
+            // low-pass, smoothed in the log domain; brightening is slower than darkening
             float lc = Mathf.Log(Mathf.Max(t.CurrentCutoff, 120f));
             float lt = Mathf.Log(Mathf.Max(t.TargetCutoff, 120f));
+            float speed = lt > lc ? (fadingOut ? 5f : 3f) : 10f;
+            float k = 1f - Mathf.Exp(-speed * dt);
             t.CurrentCutoff = Mathf.Exp(Mathf.Lerp(lc, lt, k));
             bool lpNeeded = t.CurrentCutoff < OffCutoff || t.TargetCutoff < OffCutoff;
             if (lpNeeded)
@@ -949,8 +1057,8 @@ namespace DynamicAudio
                 if (t.LowPass == null) t.LowPass = GetOrAddLowPass(go);
                 if (t.LowPass != null)
                 {
+                    t.LowPass.cutoffFrequency = Mathf.Clamp(t.CurrentCutoff, 120f, 22000f);   // set BEFORE enabling
                     if (!t.LowPass.enabled) t.LowPass.enabled = true;
-                    t.LowPass.cutoffFrequency = Mathf.Clamp(t.CurrentCutoff, 120f, 22000f);
                 }
             }
             else if (t.LowPass != null && t.LowPass.enabled)
@@ -981,6 +1089,7 @@ namespace DynamicAudio
             }
             lowPassScratch.Clear();
             AudioLowPassFilter lp = go.AddComponent<AudioLowPassFilter>();
+            lp.cutoffFrequency = 22000f;      // the Unity default is 5 kHz: never let that be heard
             lp.enabled = false;
             ownedLowPass.Add(lp.GetInstanceID());
             return lp;
@@ -992,6 +1101,10 @@ namespace DynamicAudio
             {
                 if (tracked[i] != except && tracked[i].Gain == g) return true;
             }
+            for (int i = 0; i < fading.Count; i++)
+            {
+                if (fading[i] != except && fading[i].Gain == g) return true;
+            }
             return false;
         }
 
@@ -1001,48 +1114,100 @@ namespace DynamicAudio
             {
                 if (tracked[i] != except && tracked[i].LowPass == lp) return true;
             }
+            for (int i = 0; i < fading.Count; i++)
+            {
+                if (fading[i] != except && fading[i].LowPass == lp) return true;
+            }
             return false;
         }
 
-        /// <summary>Gives the AudioSource back to the game: gain 1, low-pass off. Does not remove from the list.</summary>
+        /// <summary>
+        /// Hands the AudioSource back to the game GRADUALLY: gain and cutoff are eased back to "off" over a
+        /// moment instead of snapping (a snap is heard as a sudden volume/brightness jump).
+        /// Does not remove the sound from the tracked list.
+        /// </summary>
         private void ReleaseTracked(TrackedSound t, float now)
         {
             if (!object.ReferenceEquals(t.Source, null)) trackedMap.Remove(t.Source);
-
-            if (t.Gain != null && !GainInUse(t.Gain, t))
-            {
-                t.Gain.TargetGain = 1f;
-                PendingDisable p = new PendingDisable();
-                p.Target = t.Gain;
-                p.At = now + 0.35f;
-                pendingDisable.Add(p);
-            }
-            if (t.LowPass != null && !LowPassInUse(t.LowPass, t)) t.LowPass.enabled = false;
+            if (t.Gain == null && t.LowPass == null) return;
+            if (t.Go == null) return;
+            t.TargetGain = 1f;
+            t.TargetCutoff = 22000f;
+            t.Processed = true;
+            fading.Add(t);
         }
 
-        private void FlushPendingDisable(float now)
+        private void FadeTick(float dt)
         {
-            for (int i = pendingDisable.Count - 1; i >= 0; i--)
+            for (int i = fading.Count - 1; i >= 0; i--)
             {
-                PendingDisable p = pendingDisable[i];
-                if (now < p.At) continue;
-                pendingDisable.RemoveAt(i);
-                if (p.Target != null && !GainInUse(p.Target, null)) p.Target.enabled = false;
+                TrackedSound t = fading[i];
+                try
+                {
+                    if (t.Go == null)
+                    {
+                        fading.RemoveAt(i);
+                        continue;
+                    }
+                    ApplyTracked(t, dt, true);
+                    bool open = t.CurrentGain >= 0.995f && t.CurrentCutoff >= OffCutoff;
+                    if (open)
+                    {
+                        fading.RemoveAt(i);
+                        if (t.Gain != null && !GainInUse(t.Gain, t))
+                        {
+                            t.Gain.TargetGain = 1f;
+                            t.Gain.enabled = false;
+                        }
+                        if (t.LowPass != null && !LowPassInUse(t.LowPass, t)) t.LowPass.enabled = false;
+                    }
+                }
+                catch (Exception)
+                {
+                    try { HardOff(t); } catch (Exception) { }
+                    if (i < fading.Count && fading[i] == t) fading.RemoveAt(i);
+                }
             }
         }
 
-        private void ReleaseAll()
+        /// <summary>instant = switch every filter off right now (pause, master switch, shutdown); otherwise fade out.</summary>
+        private void ReleaseAll(bool instant)
         {
             float now = Time.time;
-            for (int i = 0; i < tracked.Count; i++) ReleaseTracked(tracked[i], now);
-            tracked.Clear();
-            trackedMap.Clear();
-            // gain filters are switched off immediately here: their target is already 1
-            for (int i = 0; i < pendingDisable.Count; i++)
+            if (!instant)
             {
-                if (pendingDisable[i].Target != null) pendingDisable[i].Target.enabled = false;
+                for (int i = 0; i < tracked.Count; i++) ReleaseTracked(tracked[i], now);
+                tracked.Clear();
+                trackedMap.Clear();
+                return;
             }
-            pendingDisable.Clear();
+            for (int i = 0; i < tracked.Count; i++) { Stash(tracked[i]); HardOff(tracked[i]); }
+            for (int i = 0; i < fading.Count; i++) HardOff(fading[i]);
+            tracked.Clear();
+            fading.Clear();
+            trackedMap.Clear();
+        }
+
+        // Remember the level of a sound across a pause so it resumes at the same level instead of stepping.
+        private void Stash(TrackedSound t)
+        {
+            if (object.ReferenceEquals(t.Source, null) || t.Source == null || !t.Processed) return;
+            SrcState st;
+            if (!states.TryGetValue(t.Source, out st)) return;
+            st.HasLast = true;
+            st.LastGain = t.CurrentGain;
+            st.LastCutoff = t.CurrentCutoff;
+            st.LastAt = Time.realtimeSinceStartup;
+        }
+
+        private static void HardOff(TrackedSound t)
+        {
+            if (t.Gain != null)
+            {
+                t.Gain.TargetGain = 1f;
+                t.Gain.enabled = false;
+            }
+            if (t.LowPass != null) t.LowPass.enabled = false;
         }
 
         // =====================================================================================

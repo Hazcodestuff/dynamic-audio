@@ -9,7 +9,16 @@ namespace DynamicAudio
         private const int WindowId = 748213;
         private static readonly string[] Tabs = new string[] { "General", "Occlusion", "Reverb", "Delay", "Effects", "Categories", "Performance" };
 
-        public bool Visible;
+        private bool visible;
+        public bool Visible
+        {
+            get { return visible; }
+            set
+            {
+                visible = value;
+                if (!value) capturingKey = false;
+            }
+        }
         public bool CapturingKey { get { return capturingKey; } }
 
         private readonly DynamicAudioPlugin p;
@@ -87,6 +96,10 @@ namespace DynamicAudio
         {
             Section("General");
             Toggle(p.cfgEnabled, "Enabled (master switch)");
+            Toggle(p.cfgSigmaMode, "SIGMA MODE  (reverb only)");
+            GUILayout.Label(p.cfgSigmaMode.Value
+                ? "SIGMA MODE IS ON: only the room reverb is active. Muffling, echo, shockwave, tinnitus and sound delay are all off, and nothing is ever attached to game sounds. The other tabs are ignored until you switch this off."
+                : "Sigma mode = the simple, bug-proof mode. It keeps ONLY the room reverb and switches everything else off (muffling, echo, shockwave, tinnitus, delay). Choose it if you just want reverb, or if you ever hear odd audio.");
             Toggle(p.cfgPauseMenuButton, "Show button in ESC > OPTIONS menu");
             FloatSlider(p.cfgMaxSoundDistance, 50f, 1000f, " m - max simulated sound distance");
 

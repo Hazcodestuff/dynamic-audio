@@ -68,6 +68,8 @@ namespace DynamicAudio
     public sealed class TrackedSound
     {
         public AudioSource Source;
+        public GameObject Go;
+        public bool SnapFirst;      // born with the final level (sound just started) instead of easing in
         public Transform SourceTop;
         public SoundCategory Category;
         public AudioLowPassFilter LowPass;

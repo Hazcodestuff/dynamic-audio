@@ -85,7 +85,6 @@ namespace DynamicAudio
                 clonedFrom.Add(id);
                 Clone(b);
             }
-            if (clonedFrom.Count > 64) clonedFrom.Clear();      // stale ids from destroyed menus
         }
 
         private static bool IsOurs(GameObject go)
@@ -110,6 +109,7 @@ namespace DynamicAudio
         {
             Transform parent = original.transform.parent;
             if (parent == null) return;
+            if (parent.Find("DynamicAudioMenuButton") != null) return;      // never twice
 
             GameObject go = UnityEngine.Object.Instantiate(original.gameObject, parent, false);
             go.name = "DynamicAudioMenuButton";
