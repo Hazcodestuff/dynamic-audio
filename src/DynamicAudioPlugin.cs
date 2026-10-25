@@ -14,7 +14,7 @@ namespace DynamicAudio
         public const string PluginName = "Dynamic Audio";
         public const string PluginVersion = "1.5.0";
 
-        private const int CurrentConfigVersion = 2;
+        private const int CurrentConfigVersion = 3;
         private const float PollInterval = 0.05f;
         private const float MinTrackDistance = 2.5f;
         private const float OffCutoff = 16500f;
@@ -46,6 +46,8 @@ namespace DynamicAudio
         public ConfigEntry<float> cfgTinnitusSensitivity;
         public ConfigEntry<float> cfgTinnitusRingVolume;
         public ConfigEntry<float> cfgTinnitusMuffle;
+        public ConfigEntry<float> cfgTinnitusCooldown;
+        public ConfigEntry<bool> cfgPauseMenuButton;
         public ConfigEntry<float> cfgAirAbsorption;
         public ConfigEntry<bool> cfgSoundDelayEnabled;
         public ConfigEntry<float> cfgSoundSpeed;
@@ -72,6 +74,8 @@ namespace DynamicAudio
         private readonly TinnitusSystem tinnitus = new TinnitusSystem();
         private RoomSystem roomSystem;
         private SettingsUi settingsUi;
+        private GameMenuIntegration gameMenu;
+        private UnityEngine.EventSystems.EventSystem blockedEventSystem;
 
         // ---- source tracking
         private sealed class SrcState
@@ -81,6 +85,10 @@ namespace DynamicAudio
             public bool Classified;
             public SoundCategory Category;
             public float QuarantineUntil;
+            public bool OwnChecked;
+            public bool MixerOwn;
+            public bool WeaponLooked;
+            public Weapon Weapon;
         }
 
         private struct PendingDisable
@@ -153,6 +161,60 @@ namespace DynamicAudio
             return st.Category;
         }
 
+        private SrcState GetState(AudioSource src)
+        {
+            SrcState st;
+            if (!states.TryGetValue(src, out st))
+            {
+                st = new SrcState();
+                states[src] = st;
+            }
+            return st;
+        }
+
+        private static bool MixerIsOwn(AudioSource s)
+        {
+            var g = s.outputAudioMixerGroup;
+            if (g == null) return false;
+            string n = g.name;
+            if (string.IsNullOrEmpty(n)) return false;
+            n = n.ToLowerInvariant();
+            return n.Contains("firstperson") || n.Contains("playervehicle");
+        }
+
+        /// <summary>True for sounds that belong to the player (first-person weapon, own vehicle) or that sit on the listener.</summary>
+        private bool IsOwnSource(AudioSource s, SrcState st, Transform ear, float dist, bool recheck)
+        {
+            if (!st.OwnChecked || recheck)
+            {
+                st.MixerOwn = MixerIsOwn(s);
+                st.OwnChecked = true;
+            }
+            if (st.MixerOwn) return true;
+            return ear != null && dist < 3f && s.transform.root == ear.root;
+        }
+
+        private bool IsReloading(AudioSource s, SrcState st)
+        {
+            if (!st.WeaponLooked)
+            {
+                st.Weapon = s.GetComponentInParent<Weapon>();
+                st.WeaponLooked = true;
+            }
+            return st.Weapon != null && st.Weapon.reloading;
+        }
+
+        /// <summary>Used by TravelDelay: the player's own sounds and quiet reload sounds are never delayed.</summary>
+        public bool IsDelayExempt(AudioSource src)
+        {
+            if (src == null) return true;
+            SrcState st = GetState(src);
+            Transform ear = listenerAudio.Ear;
+            float d = ear != null ? Vector3.Distance(ear.position, src.transform.position) : 999f;
+            if (IsOwnSource(src, st, ear, d, false)) return true;
+            return IsReloading(src, st);
+        }
+
         public bool CategoryEnabled(SoundCategory c)
         {
             switch (c)
@@ -190,6 +252,8 @@ namespace DynamicAudio
             cfgMaxSoundDistance = BindF("General", "MaxSoundDistance", 400f, 50f, 2000f, "Sounds farther than this are not simulated at all (meters).");
             cfgMenuKey = Config.Bind<KeyboardShortcut>("General", "MenuKey", new KeyboardShortcut(KeyCode.F11), "Key that opens the in-game Dynamic Audio settings menu.");
 
+            cfgPauseMenuButton = BindB("General", "PauseMenuButton", true, "Add a 'Dynamic Audio' button to the in-game ESC > OPTIONS menu. The menu key still works either way.");
+
             cfgOcclusionEnabled = BindB("Occlusion", "Enabled", true, "Enable raycast occlusion of world sounds.");
             cfgRayCount = BindI("Occlusion", "RayCount", 5, 1, 9, "Rays cast per nearby sound (1-9). More rays = better openings/partial-wall detection.");
             cfgRaySpread = BindF("Occlusion", "RaySpread", 0.25f, 0f, 1f, "How far the outer rays spread around the emitter (0 = all rays aim at the same point).");
@@ -202,17 +266,18 @@ namespace DynamicAudio
             cfgReverbEnabled = BindB("Reverb", "Enabled", true, "Enable dynamic room reverb on the listener.");
             cfgReverbIntensity = BindF("Reverb", "Intensity", 1f, 0f, 1f, "Overall reverb wetness scale (0-1).");
             cfgRoomSizeMultiplier = BindF("Reverb", "RoomSizeMultiplier", 1f, 0.3f, 3f, "Scales the influence of estimated room size on decay time.");
-            cfgEchoEnabled = BindB("Echo", "Enabled", true, "Enable subtle echo in very large spaces (tunnels, warehouses, courtyards).");
+            cfgEchoEnabled = BindB("Echo", "Enabled", true, "Enable a short echo tail after LOUD sounds (gunshots, explosions) in large or open spaces. Reloading and footsteps never trigger it.");
 
             cfgShockwaveEnabled = BindB("Shockwave", "Enabled", true, "Short concussion effect for nearby explosions. No tinnitus.");
             cfgShockwaveRadius = BindF("Shockwave", "Radius", 30f, 5f, 150f, "Distance within which a newly started explosion sound triggers the shockwave effect (meters).");
             cfgShockwaveCooldown = BindF("Shockwave", "Cooldown", 0.8f, 0f, 10f, "Minimum seconds between two shockwave effects.");
 
             cfgTinnitusEnabled = BindB("Tinnitus", "Enabled", false, "DISABLED BY DEFAULT. Ear ringing after nearby explosions or sustained loud gunfire. Turning it off restores hearing instantly.");
-            cfgTinnitusExplosionRadius = BindF("Tinnitus", "ExplosionRadius", 25f, 5f, 100f, "Explosions closer than this can trigger ringing (meters).");
-            cfgTinnitusSensitivity = BindF("Tinnitus", "Sensitivity", 1f, 0.1f, 5f, "How quickly sustained loud noise causes ringing.");
-            cfgTinnitusRingVolume = BindF("Tinnitus", "RingVolume", 0.35f, 0f, 1f, "Loudness of the ringing tone (0-1).");
-            cfgTinnitusMuffle = BindF("Tinnitus", "MuffleAmount", 0.6f, 0f, 1f, "How much temporary high-frequency hearing loss accompanies the ring (0-1).");
+            cfgTinnitusExplosionRadius = BindF("Tinnitus", "ExplosionRadius", 12f, 5f, 100f, "Explosions closer than this can trigger ringing (meters).");
+            cfgTinnitusSensitivity = BindF("Tinnitus", "Sensitivity", 0.5f, 0.1f, 5f, "How quickly sustained loud noise causes ringing. Lower = rarer.");
+            cfgTinnitusRingVolume = BindF("Tinnitus", "RingVolume", 0.2f, 0f, 1f, "Loudness of the ringing tone (0-1).");
+            cfgTinnitusMuffle = BindF("Tinnitus", "MuffleAmount", 0.4f, 0f, 1f, "How much temporary high-frequency hearing loss accompanies the ring (0-1).");
+            cfgTinnitusCooldown = BindF("Tinnitus", "Cooldown", 30f, 0f, 120f, "Minimum seconds of normal hearing after one ring ends before another can start.");
 
             cfgAirAbsorption = BindF("Distance", "AirAbsorption", 0.5f, 0f, 1f, "Extra distance attenuation and high-frequency air loss strength (0 = off, 1 = realistic).");
 
@@ -243,15 +308,27 @@ namespace DynamicAudio
         {
             if (cfgConfigVersion.Value >= CurrentConfigVersion) return;
 
-            // V6 switched itself off after repeated errors and SAVED that to the config. Undo it, and drop
-            // the old defaults that made V6 slow to notice new sounds.
-            cfgEnabled.Value = true;
-            cfgScanInterval.Value = (float)cfgScanInterval.DefaultValue;
-            cfgNearUpdateInterval.Value = (float)cfgNearUpdateInterval.DefaultValue;
-            cfgMidUpdateInterval.Value = (float)cfgMidUpdateInterval.DefaultValue;
-            cfgMaxSimulatedSounds.Value = (int)cfgMaxSimulatedSounds.DefaultValue;
-            cfgRayCount.Value = (int)cfgRayCount.DefaultValue;
-            cfgRaySpread.Value = (float)cfgRaySpread.DefaultValue;
+            if (cfgConfigVersion.Value < 2)
+            {
+                // V6 switched itself off after repeated errors and SAVED that to the config. Undo it, and drop
+                // the old defaults that made V6 slow to notice new sounds.
+                cfgEnabled.Value = true;
+                cfgScanInterval.Value = (float)cfgScanInterval.DefaultValue;
+                cfgNearUpdateInterval.Value = (float)cfgNearUpdateInterval.DefaultValue;
+                cfgMidUpdateInterval.Value = (float)cfgMidUpdateInterval.DefaultValue;
+                cfgMaxSimulatedSounds.Value = (int)cfgMaxSimulatedSounds.DefaultValue;
+                cfgRayCount.Value = (int)cfgRayCount.DefaultValue;
+                cfgRaySpread.Value = (float)cfgRaySpread.DefaultValue;
+            }
+            if (cfgConfigVersion.Value < 3)
+            {
+                // 1.5.0 final: tinnitus was far too sensitive. Move everyone to the gentler defaults.
+                cfgTinnitusExplosionRadius.Value = (float)cfgTinnitusExplosionRadius.DefaultValue;
+                cfgTinnitusSensitivity.Value = (float)cfgTinnitusSensitivity.DefaultValue;
+                cfgTinnitusRingVolume.Value = (float)cfgTinnitusRingVolume.DefaultValue;
+                cfgTinnitusMuffle.Value = (float)cfgTinnitusMuffle.DefaultValue;
+                cfgTinnitusCooldown.Value = (float)cfgTinnitusCooldown.DefaultValue;
+            }
             cfgConfigVersion.Value = CurrentConfigVersion;
             Config.Save();
             Logger.LogInfo("Config migrated to version " + CurrentConfigVersion + " (master switch re-enabled).");
@@ -298,6 +375,7 @@ namespace DynamicAudio
             tinnitus.SetHost(gameObject);
             listenerAudio.Refresh(Time.time, true);
             settingsUi = new SettingsUi(this);
+            gameMenu = new GameMenuIntegration(this, settingsUi);
             Logger.LogInfo("Dynamic Audio v" + PluginVersion + " initialized (occlusion mask 0x" + mask.ToString("X") + ")");
         }
 
@@ -315,6 +393,8 @@ namespace DynamicAudio
                 tinnitus.Shutdown();
                 TravelDelay.Uninstall();
                 RestoreCursor();
+                UpdateEventSystemBlock(false);
+                if (gameMenu != null) gameMenu.DestroyClones();
                 SaveConfigNow();
             }
             catch (Exception) { }
@@ -330,6 +410,9 @@ namespace DynamicAudio
         {
             try { HandleMenuKey(); }
             catch (Exception e) { RegisterFailure(e); }
+
+            try { if (gameMenu != null) gameMenu.Tick(Time.unscaledTime, cfgPauseMenuButton.Value); }
+            catch (Exception) { }
 
             if (configDirty && Time.unscaledTime >= configDirtyAt) SaveConfigNow();
 
@@ -365,8 +448,32 @@ namespace DynamicAudio
             {
                 RestoreCursor();
             }
+            UpdateEventSystemBlock(visible);
             if (menuWasVisible && !visible) SaveConfigNow();
             menuWasVisible = visible;
+        }
+
+        // While our IMGUI window is open, clicks must not also hit the game's menu buttons underneath it.
+        private void UpdateEventSystemBlock(bool visible)
+        {
+            try
+            {
+                if (visible)
+                {
+                    UnityEngine.EventSystems.EventSystem es = UnityEngine.EventSystems.EventSystem.current;
+                    if (blockedEventSystem == null && es != null && es.enabled)
+                    {
+                        es.enabled = false;
+                        blockedEventSystem = es;
+                    }
+                }
+                else if (blockedEventSystem != null)
+                {
+                    blockedEventSystem.enabled = true;
+                    blockedEventSystem = null;
+                }
+            }
+            catch (Exception) { blockedEventSystem = null; }
         }
 
         private void RestoreCursor()
@@ -381,6 +488,7 @@ namespace DynamicAudio
         {
             if (settingsUi == null) return;
             if (cfgMenuKey.Value.IsDown()) settingsUi.Visible = !settingsUi.Visible;
+            else if (settingsUi.Visible && !settingsUi.CapturingKey && Input.GetKeyDown(KeyCode.Escape)) settingsUi.Visible = false;
         }
 
         // =====================================================================================
@@ -436,7 +544,7 @@ namespace DynamicAudio
             listenerAudio.SetActive(true);
             listenerAudio.Configure(cfgReverbIntensity.Value, cfgRoomSizeMultiplier.Value, cfgEchoEnabled.Value);
             listenerAudio.Refresh(now, false);
-            tinnitus.SetParams(cfgTinnitusSensitivity.Value, cfgTinnitusRingVolume.Value, cfgTinnitusMuffle.Value);
+            tinnitus.SetParams(cfgTinnitusSensitivity.Value, cfgTinnitusRingVolume.Value, cfgTinnitusMuffle.Value, cfgTinnitusCooldown.Value);
 
             Transform ear = listenerAudio.Ear;
             if (ear == null)
@@ -506,7 +614,6 @@ namespace DynamicAudio
         private void PollSources(Vector3 earPos, float now, float pollDt)
         {
             Transform ear = listenerAudio.Ear;
-            Transform earRoot = ear != null ? ear.root : null;
             bool tinn = cfgTinnitusEnabled.Value;
             float maxDist = cfgMaxSoundDistance.Value;
 
@@ -530,8 +637,8 @@ namespace DynamicAudio
                 st.FirstSeen = false;
 
                 if (!playing) continue;
-                if (s.spatialBlend < 0.5f) continue;
                 if (now < st.QuarantineUntil) continue;
+                bool flat = s.spatialBlend < 0.5f;   // first-person sounds are often 2D: still needed for echo/tinnitus
 
                 Transform tr = s.transform;
                 float d = Vector3.Distance(earPos, tr.position);
@@ -544,13 +651,44 @@ namespace DynamicAudio
                 }
                 SoundCategory cat = st.Category;
 
-                // The listener's own gear: only feeds the tinnitus exposure meter.
-                if (earRoot != null && d < 3f && tr.root == earRoot)
+                bool loudCat = cat == SoundCategory.Gunshot || cat == SoundCategory.Explosion;
+                bool reloading = cat == SoundCategory.Gunshot && IsReloading(s, st);
+                bool own = IsOwnSource(s, st, ear, d, justStarted);
+                if (flat && !own) continue;
+
+                // Echo is event driven: only a freshly fired shot / blast pulses it; reloading never does.
+                if (justStarted && loudCat)
                 {
-                    if (tinn && (cat == SoundCategory.Gunshot || cat == SoundCategory.Explosion))
+                    if (reloading)
+                    {
+                        if (own) listenerAudio.SuppressEcho(0.8f);
+                    }
+                    else if (own)
+                    {
+                        listenerAudio.PulseEcho(cat == SoundCategory.Explosion ? 1f : 0.8f);
+                    }
+                    else
+                    {
+                        float reach = cat == SoundCategory.Explosion ? 250f : 140f;
+                        float k0 = 1f - d / reach;
+                        if (k0 > 0f) listenerAudio.PulseEcho(Mathf.Clamp01(0.25f + 0.6f * k0));
+                    }
+                }
+
+                // The listener's own gear: never occluded or filtered; only feeds the tinnitus exposure meter.
+                if (own)
+                {
+                    TrackedSound tsOwn;
+                    if (trackedMap.TryGetValue(s, out tsOwn))
+                    {
+                        int idx = tracked.IndexOf(tsOwn);
+                        if (idx >= 0) RemoveTracked(idx, now);
+                        else trackedMap.Remove(s);
+                    }
+                    if (tinn && loudCat && !reloading)
                     {
                         float enc = 1f + 0.8f * Mathf.Clamp01(listenerAudio.CurrentRoom.Enclosure);
-                        tinnitus.AddExposure(pollDt * 0.06f * enc * cfgTinnitusSensitivity.Value);
+                        tinnitus.AddExposure(pollDt * 0.02f * enc * cfgTinnitusSensitivity.Value);
                     }
                     continue;
                 }
@@ -568,7 +706,10 @@ namespace DynamicAudio
                     if (tinn && d < cfgTinnitusExplosionRadius.Value)
                     {
                         float k2 = 1f - d / cfgTinnitusExplosionRadius.Value;
-                        tinnitus.TriggerExplosion(k2 * k2);
+                        float sev = k2 * k2;
+                        // A wall between you and the blast halves the severity.
+                        if (Physics.Linecast(earPos, tr.position + Vector3.up * 0.5f, OcclusionSystem.GameLineOfSightMask, QueryTriggerInteraction.Ignore)) sev *= 0.5f;
+                        tinnitus.TriggerExplosion(sev);
                     }
                 }
 
@@ -709,14 +850,15 @@ namespace DynamicAudio
             Vector3 pos = s.transform.position;
             float d = t.Distance;
 
-            if (cfgTinnitusEnabled.Value && (t.Category == SoundCategory.Gunshot || t.Category == SoundCategory.Explosion) && d < 25f)
+            if (cfgTinnitusEnabled.Value && (t.Category == SoundCategory.Gunshot || t.Category == SoundCategory.Explosion) && d < 20f)
             {
-                float f = 1f - d / 25f;
+                float f = 1f - d / 20f;
                 float enc = 1f + 0.8f * Mathf.Clamp01(listenerAudio.CurrentRoom.Enclosure);
-                tinnitus.AddExposure(interval * 0.06f * f * enc * cfgTinnitusSensitivity.Value);
+                tinnitus.AddExposure(interval * 0.03f * f * enc * cfgTinnitusSensitivity.Value);
             }
 
             float ratio = 0f, thick = 0f, hfLoss = 1f;
+            bool covered = false;
             if (cfgOcclusionEnabled.Value && t.RayLod >= 0 && d > 1.5f)
             {
                 int rays = (t.RayLod == 1) ? 1 : cfgRayCount.Value;
@@ -724,6 +866,7 @@ namespace DynamicAudio
                 ratio = r.Ratio;
                 thick = r.ThicknessM;
                 hfLoss = r.MaterialHfLoss;
+                covered = r.SourceCovered;
             }
             if (t.Processed) ratio = Mathf.Lerp(t.Occlusion, ratio, 0.6f);   // damp ray flicker
             t.Occlusion = ratio;
@@ -735,6 +878,7 @@ namespace DynamicAudio
                 float vol = Mathf.Lerp(1f, cfgOcclusionVolumeFloor.Value, ratio);
                 float thickLoss = Mathf.Clamp01(thick / 6f) * 0.5f * strength;
                 gain *= vol * (1f - Mathf.Clamp01(thickLoss * ratio));
+                if (covered) gain *= 0.92f;     // emitter is indoors: the room swallows a little more
             }
 
             float air = Mathf.Clamp01(cfgAirAbsorption.Value);
@@ -747,7 +891,11 @@ namespace DynamicAudio
             {
                 float m = Mathf.Pow(ratio, 0.75f) * strength;
                 m *= Mathf.Clamp(1f + thick * 0.25f, 1f, 3f) * Mathf.Lerp(1f, hfLoss, 0.6f);
-                cutoff = Mathf.Lerp(20000f, cfgMinCutoffHz.Value, Mathf.Clamp01(m));
+                if (covered) m *= 1.15f;
+                // Log-space sweep: equal steps sound like equal changes in brightness.
+                float lo = Mathf.Log(Mathf.Max(100f, cfgMinCutoffHz.Value));
+                float hi = Mathf.Log(20000f);
+                cutoff = Mathf.Exp(Mathf.Lerp(hi, lo, Mathf.Clamp01(m)));
             }
             if (air > 0f)
             {
@@ -791,7 +939,7 @@ namespace DynamicAudio
             }
 
             // low-pass, smoothed in the log domain
-            float k = 1f - Mathf.Exp(-12f * dt);
+            float k = 1f - Mathf.Exp(-10f * dt);
             float lc = Mathf.Log(Mathf.Max(t.CurrentCutoff, 120f));
             float lt = Mathf.Log(Mathf.Max(t.TargetCutoff, 120f));
             t.CurrentCutoff = Mathf.Exp(Mathf.Lerp(lc, lt, k));
@@ -902,6 +1050,11 @@ namespace DynamicAudio
         // =====================================================================================
         private void OnGUI()
         {
+            if (gameMenu != null)
+            {
+                try { gameMenu.DrawFallback(); }
+                catch (Exception e) { if (e is ExitGUIException) throw; }
+            }
             if (settingsUi != null && settingsUi.Visible)
             {
                 try { settingsUi.Draw(); }

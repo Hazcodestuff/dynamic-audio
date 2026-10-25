@@ -17,7 +17,9 @@ namespace DynamicAudio
         private readonly float[] sampleBuf = new float[1024];
         private float sensitivity = 1f;
         private float ringVolume = 0.35f;
-        private float muffleAmount = 0.6f;
+        private float muffleAmount = 0.4f;
+        private float cooldown = 30f;
+        private float nextRingAllowed;
 
         public float MuffleCutoff = 22000f;
 
@@ -29,21 +31,25 @@ namespace DynamicAudio
             host = go;
         }
 
-        public void SetParams(float sens, float vol, float muffleAmt)
+        public void SetParams(float sens, float vol, float muffleAmt, float cooldownSec)
         {
             sensitivity = sens;
             ringVolume = vol;
             muffleAmount = muffleAmt;
+            cooldown = Mathf.Max(0f, cooldownSec);
         }
 
         public void TriggerExplosion(float severity01)
         {
-            if (severity01 < 0.2f) return;
-            StartRing(Mathf.Lerp(4f, 14f, Mathf.Clamp01(severity01)), Mathf.Clamp01(severity01));
+            // Only genuinely close blasts ring, and for a few seconds rather than up to 14.
+            if (severity01 < 0.35f) return;
+            StartRing(Mathf.Lerp(2.5f, 7f, Mathf.Clamp01(severity01)), Mathf.Clamp01(severity01));
         }
 
         private void StartRing(float duration, float severity)
         {
+            if (Time.time < nextRingAllowed) return;      // cooldown: never chain-ring the player
+            nextRingAllowed = Time.time + duration + cooldown;
             ringDuration = Mathf.Max(1f, duration);
             ringTime = ringDuration;
             ringPeak = ringVolume * Mathf.Lerp(0.6f, 1f, severity);
@@ -57,7 +63,7 @@ namespace DynamicAudio
             {
                 float over = Mathf.Clamp(exposure - 1f, 0f, 1f);
                 exposure = 0f;
-                StartRing(Mathf.Lerp(3f, 10f, over), Mathf.Lerp(0.5f, 1f, over));
+                StartRing(Mathf.Lerp(2f, 5f, over), Mathf.Lerp(0.4f, 0.9f, over));
             }
         }
 
@@ -76,14 +82,16 @@ namespace DynamicAudio
             for (int i = 0; i < sampleBuf.Length; i++) sum += sampleBuf[i] * sampleBuf[i];
             float rms = Mathf.Sqrt(sum / sampleBuf.Length);
             float enc = 1f + 0.8f * Mathf.Clamp01(enclosure);
-            if (rms > 0.03f) AddExposure((rms - 0.02f) * 3f * sensitivity * enc * 0.1f);
-            else exposure = Mathf.Max(0f, exposure - 0.002f);
+            // Only really loud, sustained output builds exposure; quiet moments drain it ~5x faster than before.
+            if (rms > 0.15f) AddExposure((rms - 0.10f) * 1.5f * sensitivity * enc * 0.1f);
+            else exposure = Mathf.Max(0f, exposure - 0.01f);
         }
 
         public void Update(float dt, bool enabled)
         {
             if (!enabled)
             {
+                nextRingAllowed = 0f;
                 if (ringTime > 0f || exposure > 0f || MuffleCutoff < 21000f || (tone != null && tone.isPlaying)) Shutdown();
                 return;
             }

@@ -57,6 +57,7 @@ namespace DynamicAudio
         public float ThicknessM;
         public AcousticMaterial DominantMaterial;
         public float MaterialHfLoss;
+        public bool SourceCovered;      // roofed over (only measured when something blocks the path)
     }
 
     /// <summary>
