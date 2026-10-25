@@ -1,4 +1,4 @@
-# Dynamic Audio 1.5.1 (for Ravenfield)
+# Dynamic Audio 1.5.2 (for Ravenfield)
 
 A BepInEx plugin that makes Ravenfield sound like a real battlefield: sounds get muffled behind walls, rooms add reverb, loud shots leave a short echo in open spaces, and (optionally) your ears ring after a nearby explosion.
 
@@ -221,16 +221,21 @@ dotnet build -c Release -p:RavenfieldDir="C:\...\Ravenfield" -p:DefineConstants=
 
 | Problem | Try this |
 |---|---|
-| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.1 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
+| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.2 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
 | Menu button missing in ESC > OPTIONS | Use F11 or the corner button that shows while paused. |
 | Too muffled | Lower `WallMuffleStrength` or raise `MinCutoffHz`. |
 | Echo still sounds odd | Turn `[Echo] Enabled` off, and tell me which situation it happens in. |
 | Tinnitus too much | Lower Sensitivity/RingVolume or raise Cooldown, or switch it off. |
 | Lower FPS | Lower `MaxSimulatedSounds` and `RayCount`. |
+| Drone/buzz while the pause menu is open | Set `[General] Enabled = false` and pause again. If the buzz is still there, it comes from the game or another mod, not Dynamic Audio. If it disappears, tell me whether it also happens with **Sigma Mode** on. |
 | Odd audio of any kind | Turn on **Sigma Mode** (reverb only). If the problem disappears, one of the other effects was involved; please report which one and when. |
 | "Safe mode" in the debug overlay | The mod hit many errors in a row and paused itself for 5 seconds. It recovers on its own and never changes your settings. Please report the log. |
 
 ---
+
+## What changed in 1.5.2
+
+- **Pause drone, take two:** analysing a recording showed one 1024-sample audio buffer stuck on repeat (a ~47 Hz buzz) for as long as the pause menu was open. Now the mod hooks the game's own pause call (`AudioManager.PausePlayback`): before the game pauses sound, every reverb/echo/low-pass/gain filter the mod added is **removed** from the audio, and the real pause happens a few frames later. Filters are re-created automatically when you resume. Switching the master switch off also removes them completely.
 
 ## What changed in 1.5.1
 

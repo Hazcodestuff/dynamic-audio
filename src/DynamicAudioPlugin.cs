@@ -12,7 +12,7 @@ namespace DynamicAudio
     {
         public const string PluginGuid = "lexge.dynamicaudio";
         public const string PluginName = "Dynamic Audio";
-        public const string PluginVersion = "1.5.1";
+        public const string PluginVersion = "1.5.2";
 
         private const int CurrentConfigVersion = 3;
         private const float PollInterval = 0.05f;
@@ -136,9 +136,32 @@ namespace DynamicAudio
         public Transform Ear { get { return listenerAudio.Ear; } }
 
         /// <summary>The game is paused (time stopped or audio paused): all of our filters are switched off meanwhile.</summary>
+        private static bool pausePending;
+        private static int pauseDelayFrames;
+
         public static bool IsPaused
         {
-            get { return Time.timeScale < 0.01f || AudioListener.pause; }
+            get { return pausePending || Time.timeScale < 0.01f || AudioListener.pause; }
+        }
+
+        /// <summary>
+        /// PauseHook: the game wants to pause audio. Take our filters off the graph first, and let the real pause
+        /// happen a few frames later. Returns true when the original call must be skipped for now.
+        /// </summary>
+        public bool RequestPause()
+        {
+            if (cfgEnabled == null || !cfgEnabled.Value || pausePending) return false;
+            pausePending = true;
+            pauseDelayFrames = 4;
+            wasPaused = true;
+            try { EnterPause(); }
+            catch (Exception e) { RegisterFailure(e); }
+            return true;
+        }
+
+        public void CancelPendingPause()
+        {
+            pausePending = false;
         }
 
         public bool TravelDelayActive
@@ -389,6 +412,7 @@ namespace DynamicAudio
             Config.SettingChanged += OnSettingChanged;
 
             lastUseGameMask = cfgUseGameMask.Value;
+            PauseHook.Install(Logger);
             int mask = BuildMask();
             occlusion.Configure(cfgRayCount.Value, cfgRaySpread.Value);
             occlusion.SetMask(mask);
@@ -411,8 +435,10 @@ namespace DynamicAudio
             {
                 ReleaseAll(true);
                 listenerAudio.Shutdown();
+                listenerAudio.DestroyFilters();
                 tinnitus.Shutdown();
                 TravelDelay.Uninstall();
+                PauseHook.Uninstall();
                 RestoreCursor();
                 UpdateEventSystemBlock(false);
                 if (gameMenu != null) gameMenu.DestroyClones();
@@ -429,6 +455,12 @@ namespace DynamicAudio
 
         private void Update()
         {
+            if (pausePending && --pauseDelayFrames <= 0)
+            {
+                pausePending = false;
+                PauseHook.ApplyPause();
+            }
+
             try { HandleMenuKey(); }
             catch (Exception e) { RegisterFailure(e); }
 
@@ -558,9 +590,8 @@ namespace DynamicAudio
         {
             ReleaseAll(true);
             TravelDelay.Flush();
-            listenerAudio.SetActive(false);
-            listenerAudio.Tick(0f);
             tinnitus.Shutdown();
+            listenerAudio.DestroyFilters();
         }
 
         private void Deactivate()
@@ -568,8 +599,7 @@ namespace DynamicAudio
             wasEnabled = false;
             wasPaused = false;
             ReleaseAll(true);
-            listenerAudio.SetActive(false);
-            listenerAudio.Tick(0f);
+            listenerAudio.DestroyFilters();
             tinnitus.Shutdown();
             TravelDelay.Flush();
         }
@@ -1202,12 +1232,20 @@ namespace DynamicAudio
 
         private static void HardOff(TrackedSound t)
         {
+            // Switch off AND remove: a filter left on a paused / reconfigured audio graph is what loops stale buffers.
             if (t.Gain != null)
             {
                 t.Gain.TargetGain = 1f;
                 t.Gain.enabled = false;
+                UnityEngine.Object.Destroy(t.Gain);
             }
-            if (t.LowPass != null) t.LowPass.enabled = false;
+            if (t.LowPass != null)
+            {
+                t.LowPass.enabled = false;
+                UnityEngine.Object.Destroy(t.LowPass);
+            }
+            t.Gain = null;
+            t.LowPass = null;
         }
 
         // =====================================================================================

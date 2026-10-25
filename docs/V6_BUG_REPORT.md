@@ -80,3 +80,9 @@ Issues reported after the first 1.5.0 test, and their fixes:
 | Sudden +10 dB jumps (distant vehicle suddenly "in front of me", also guns) | Sounds that were attenuated/muffled were released or re-evaluated and their gain snapped to 1 (sound-budget eviction, occlusion-ray flicker). A newly enabled Unity filter could also start from its loud defaults (echo wet mix 1.0, 5 kHz low-pass) for a moment. | Gain and cutoff now move gradually in dB (open 10 dB/s, close 45 dB/s). Releasing a sound fades it back over a moment; a re-tracked sound adopts the fading filter. Filter parameters are written before the filter is enabled; own filters start at neutral values. |
 | Travel delay "freaks out" with many sounds | The delayed one-shot was replayed later on the game's pooled AudioSource, which may by then have moved/changed volume/been reused. | Delayed sounds are now a temporary copy created at the shot's position, started at due time (game time). Only gunshots/explosions, never loops, hard queue cap, nothing while paused. |
 | Request: simple mode | n/a | `Sigma Mode`: reverb only. Never attaches anything to game sounds. |
+
+---
+
+## Addendum: 1.5.2 (pause drone analysed from a recording)
+
+Audio from a user's recording (Ravenfield + 1.5.1) was analysed: during every pause-menu period the output was a perfectly periodic tone (fundamental 46.9 Hz = 48000 / 1024, harmonics at 140/188/328 Hz, spectral flatness ~0.003) and absent during normal play, i.e. a single 1024-sample DSP buffer repeating. The game pauses audio with `AudioListener.pause = true` (`AudioManager.PausePlayback`). Disabling our filters one frame after that was too late, so 1.5.2 patches `PausePlayback`/`ResumePlayback` with Harmony: filters are removed first, the real pause is applied 4 frames later, and the resume cancels a pending pause.

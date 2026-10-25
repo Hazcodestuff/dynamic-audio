@@ -176,6 +176,30 @@ namespace DynamicAudio
             if (r.LowPass != null) r.LowPass.enabled = false;
         }
 
+        /// <summary>
+        /// Removes our reverb/echo/low-pass components from the listener altogether (pause, master switch off).
+        /// They are re-created by Refresh()/Attach() when the simulation runs again.
+        /// </summary>
+        public void DestroyFilters()
+        {
+            shockActive = false;
+            echoEnv = 0f;
+            foreach (KeyValuePair<int, Rig> kv in rigs)
+            {
+                Rig r = kv.Value;
+                if (r == null) continue;
+                if (r.Reverb != null) { r.Reverb.enabled = false; UnityEngine.Object.Destroy(r.Reverb); }
+                if (r.Echo != null) { r.Echo.enabled = false; UnityEngine.Object.Destroy(r.Echo); }
+                if (r.LowPass != null) { r.LowPass.enabled = false; UnityEngine.Object.Destroy(r.LowPass); }
+            }
+            rigs.Clear();
+            rig = null;
+            listener = null;
+            ear = null;
+            retryAt = 0f;
+            listenerInfo = "filters removed (paused / off)";
+        }
+
         /// <summary>Master switch off / plugin unload: leave the listener exactly as the game made it.</summary>
         public void Shutdown()
         {
