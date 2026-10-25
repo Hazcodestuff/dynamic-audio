@@ -75,7 +75,6 @@ namespace DynamicAudio
         private RoomSystem roomSystem;
         private SettingsUi settingsUi;
         private GameMenuIntegration gameMenu;
-        private UnityEngine.EventSystems.EventSystem blockedEventSystem;
 
         // ---- source tracking
         private sealed class SrcState
@@ -105,6 +104,14 @@ namespace DynamicAudio
         private readonly List<PendingDisable> pendingDisable = new List<PendingDisable>();
         private readonly HashSet<int> ownedLowPass = new HashSet<int>();
         private readonly List<AudioLowPassFilter> lowPassScratch = new List<AudioLowPassFilter>(4);
+        private readonly Dictionary<AudioSource, int> gainComponentIds = new Dictionary<AudioSource, int>(32);
+        private readonly List<int> deadIdScratch = new List<int>(16);
+        private HashSet<string> userSetKeysBeforeBind;
+
+        // ---- pause-safe clock (Time.timeScale freezes Time.time in Ravenfield's menus; unscaled never does)
+        private float simClock;
+        private float lastUnscaled;
+        private bool clockSeeded;
 
         private float nextScan;
         private float nextPoll;
@@ -112,6 +119,7 @@ namespace DynamicAudio
         private float nextRoomProbe;
         private float nextLoudSample;
         private float nextShockTime;
+        private float nextMenuKeyCheck;
         private bool wasEnabled;
         private bool lastUseGameMask;
 
@@ -119,6 +127,7 @@ namespace DynamicAudio
         private float failWindowStart;
         private int failCount;
         private float safeModeUntil;
+        private int safeModeStrikes;      // exponential backoff while a fault keeps coming back
 
         // ---- config autosave / cursor
         private bool configDirty;
@@ -127,6 +136,10 @@ namespace DynamicAudio
         private CursorLockMode prevLock;
         private bool prevCursorVisible;
         private bool menuWasVisible;
+
+        // ---- EventSystem blocking bookkeeping (only touch what we ourselves disabled)
+        private UnityEngine.EventSystems.EventSystem blockedEventSystem;
+        private bool eventSystemWasEnabledByUs;
 
         private GUIStyle debugStyle;
 
@@ -137,16 +150,29 @@ namespace DynamicAudio
 
         public bool TravelDelayActive
         {
-            get { return cfgEnabled != null && cfgEnabled.Value && cfgSoundDelayEnabled.Value && TravelDelay.Installed && Time.time >= safeModeUntil; }
+            get { return cfgEnabled != null && cfgEnabled.Value && cfgSoundDelayEnabled.Value && TravelDelay.Installed && simClock >= safeModeUntil; }
+        }
+
+        /// <summary>Monotonic seconds since plugin Awake; ignores timeScale so menus/pause cannot freeze timers.</summary>
+        private float SimTime()
+        {
+            float u = Time.unscaledTime;
+            if (!clockSeeded) { lastUnscaled = u; clockSeeded = true; return simClock; }
+            float d = u - lastUnscaled;
+            if (d < 0f || d > 5f) d = 0f;       // tab-out or editor time jump: do not fast-forward the sim
+            lastUnscaled = u;
+            simClock += d;
+            return simClock;
         }
 
         public void LogWarn(string msg)
         {
-            Logger.LogWarning(msg);
+            try { Logger.LogWarning(msg); } catch (Exception) { }
         }
 
         public SoundCategory ClassifyCached(AudioSource src)
         {
+            if (src == null) return SoundCategory.Other;
             SrcState st;
             if (!states.TryGetValue(src, out st))
             {
@@ -155,7 +181,8 @@ namespace DynamicAudio
             }
             if (!st.Classified)
             {
-                st.Category = SoundClassifier.Classify(src);
+                try { st.Category = SoundClassifier.Classify(src); }
+                catch (Exception) { st.Category = SoundCategory.Environment; }   // game types missing: treat as generic
                 st.Classified = true;
             }
             return st.Category;
@@ -248,6 +275,10 @@ namespace DynamicAudio
 
         private void BindConfig()
         {
+            // Snapshot what the user actually has in their config file BEFORE binding defaults. Used by
+            // MigrateConfig so that a version migration never silently resets values the user tuned by hand.
+            userSetKeysBeforeBind = LoadUserSetKeys();
+
             cfgEnabled = BindB("General", "Enabled", true, "Master switch for the whole acoustic simulation. (Never switched off automatically any more.)");
             cfgMaxSoundDistance = BindF("General", "MaxSoundDistance", 400f, 50f, 2000f, "Sounds farther than this are not simulated at all (meters).");
             cfgMenuKey = Config.Bind<KeyboardShortcut>("General", "MenuKey", new KeyboardShortcut(KeyCode.F11), "Key that opens the in-game Dynamic Audio settings menu.");
@@ -308,38 +339,96 @@ namespace DynamicAudio
         {
             if (cfgConfigVersion.Value >= CurrentConfigVersion) return;
 
+            // Bug fix (1.5.1): a migration must never silently reset settings the user tuned by hand.
+            // Only values that were NOT present in the config file (i.e. still at their old default) are
+            // overwritten with the new defaults. cfgEnabled is always forced back on, because V6 wrote
+            // "Enabled=false" itself after repeated errors - that was the mod's doing, not the user's.
             if (cfgConfigVersion.Value < 2)
             {
                 // V6 switched itself off after repeated errors and SAVED that to the config. Undo it, and drop
                 // the old defaults that made V6 slow to notice new sounds.
                 cfgEnabled.Value = true;
-                cfgScanInterval.Value = (float)cfgScanInterval.DefaultValue;
-                cfgNearUpdateInterval.Value = (float)cfgNearUpdateInterval.DefaultValue;
-                cfgMidUpdateInterval.Value = (float)cfgMidUpdateInterval.DefaultValue;
-                cfgMaxSimulatedSounds.Value = (int)cfgMaxSimulatedSounds.DefaultValue;
-                cfgRayCount.Value = (int)cfgRayCount.DefaultValue;
-                cfgRaySpread.Value = (float)cfgRaySpread.DefaultValue;
+                RestoreDefaultIfUntouched(cfgScanInterval);
+                RestoreDefaultIfUntouched(cfgNearUpdateInterval);
+                RestoreDefaultIfUntouched(cfgMidUpdateInterval);
+                RestoreDefaultIfUntouched(cfgMaxSimulatedSounds);
+                RestoreDefaultIfUntouched(cfgRayCount);
+                RestoreDefaultIfUntouched(cfgRaySpread);
             }
             if (cfgConfigVersion.Value < 3)
             {
-                // 1.5.0 final: tinnitus was far too sensitive. Move everyone to the gentler defaults.
-                cfgTinnitusExplosionRadius.Value = (float)cfgTinnitusExplosionRadius.DefaultValue;
-                cfgTinnitusSensitivity.Value = (float)cfgTinnitusSensitivity.DefaultValue;
-                cfgTinnitusRingVolume.Value = (float)cfgTinnitusRingVolume.DefaultValue;
-                cfgTinnitusMuffle.Value = (float)cfgTinnitusMuffle.DefaultValue;
-                cfgTinnitusCooldown.Value = (float)cfgTinnitusCooldown.DefaultValue;
+                // 1.5.0 final: tinnitus was far too sensitive. Move everyone who left it at the old defaults
+                // to the gentler ones; keep manually tuned values.
+                RestoreDefaultIfUntouched(cfgTinnitusExplosionRadius);
+                RestoreDefaultIfUntouched(cfgTinnitusSensitivity);
+                RestoreDefaultIfUntouched(cfgTinnitusRingVolume);
+                RestoreDefaultIfUntouched(cfgTinnitusMuffle);
+                RestoreDefaultIfUntouched(cfgTinnitusCooldown);
             }
             cfgConfigVersion.Value = CurrentConfigVersion;
             Config.Save();
             Logger.LogInfo("Config migrated to version " + CurrentConfigVersion + " (master switch re-enabled).");
         }
 
+        /// <summary>
+        /// Sets an entry to its current default only when the user's config file did not contain that key
+        /// before this session (meaning they never changed it). Wrapped in try/catch: worst case the value
+        /// simply stays as-is, which is safe.
+        /// </summary>
+        private void RestoreDefaultIfUntouched(ConfigEntryBase entry)
+        {
+            try
+            {
+                if (entry == null) return;
+                string composite = entry.Definition.Section + ":" + entry.Definition.Key;
+                if (userSetKeysBeforeBind != null && userSetKeysBeforeBind.Contains(composite)) return;
+                entry.BoxedValue = entry.DefaultValue;
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>Reads the BepInEx config file and returns every "Section:Key" the user actually has saved.</summary>
+        private HashSet<string> LoadUserSetKeys()
+        {
+            HashSet<string> keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string path = Config.ConfigFilePath;
+                if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return keys;
+                string[] lines = System.IO.File.ReadAllLines(path);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i].Trim();
+                    if (line.Length == 0 || line.StartsWith(";") || line.StartsWith("#")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string left = line.Substring(0, eq).Trim();
+                    int colon = left.IndexOf(':');
+                    if (colon <= 0 || colon >= left.Length - 1) continue;
+                    keys.Add(left);
+                }
+            }
+            catch (Exception) { keys.Clear(); }   // unreadable file: behave conservatively (reset nothing)
+            return keys;
+        }
+
         public void ResetDefaults()
         {
-            foreach (KeyValuePair<ConfigDefinition, ConfigEntryBase> kv in Config)
+            try
             {
-                if (kv.Key.Section == "Internal") continue;
-                kv.Value.BoxedValue = kv.Value.DefaultValue;
+                foreach (KeyValuePair<ConfigDefinition, ConfigEntryBase> kv in Config)
+                {
+                    if (kv.Key.Section == "Internal") continue;
+                    kv.Value.BoxedValue = kv.Value.DefaultValue;
+                }
+                // Persist immediately: a reset that only lives until the autosave window closes could be
+                // lost if the game quits right after the button press.
+                configDirty = true;
+                configDirtyAt = Time.unscaledTime;
+            }
+            catch (Exception e)
+            {
+                try { Logger.LogWarning("Reset to defaults failed: " + e.Message); } catch (Exception) { }
             }
         }
 
@@ -361,6 +450,14 @@ namespace DynamicAudio
         // =====================================================================================
         private void Awake()
         {
+            // Bug proofing: if a second instance ever spawns (duplicate plugin DLLs, scene reload leaving a
+            // stale object behind), keep the new one completely inert instead of double-hooking everything.
+            if (Instance != null && Instance != this)
+            {
+                try { Logger.LogWarning("Dynamic Audio: duplicate plugin instance detected; the extra copy is disabled."); } catch (Exception) { }
+                try { this.enabled = false; } catch (Exception) { }
+                return;
+            }
             Instance = this;
             BindConfig();
             MigrateConfig();
@@ -373,7 +470,7 @@ namespace DynamicAudio
             occlusion.SetMask(mask);
             roomSystem = new RoomSystem(mask);
             tinnitus.SetHost(gameObject);
-            listenerAudio.Refresh(Time.time, true);
+            listenerAudio.Refresh(Time.unscaledTime, true);
             settingsUi = new SettingsUi(this);
             gameMenu = new GameMenuIntegration(this, settingsUi);
             Logger.LogInfo("Dynamic Audio v" + PluginVersion + " initialized (occlusion mask 0x" + mask.ToString("X") + ")");
@@ -423,7 +520,7 @@ namespace DynamicAudio
             }
             wasEnabled = true;
 
-            float now = Time.time;
+            float now = SimTime();
             if (now < safeModeUntil) return;
 
             try { Simulate(now); }
@@ -454,41 +551,72 @@ namespace DynamicAudio
         }
 
         // While our IMGUI window is open, clicks must not also hit the game's menu buttons underneath it.
+        // Bug proofing: we only ever re-enable an EventSystem that WE disabled (eventSystemWasEnabledByUs),
+        // so another mod that turned it off on its own never gets switched back on by us. If the EventSystem
+        // object disappears while blocked we just forget about it - nothing to restore, no crash.
         private void UpdateEventSystemBlock(bool visible)
         {
             try
             {
                 if (visible)
                 {
-                    UnityEngine.EventSystems.EventSystem es = UnityEngine.EventSystems.EventSystem.current;
-                    if (blockedEventSystem == null && es != null && es.enabled)
+                    if (blockedEventSystem == null)
                     {
-                        es.enabled = false;
-                        blockedEventSystem = es;
+                        UnityEngine.EventSystems.EventSystem es = UnityEngine.EventSystems.EventSystem.current;
+                        if (es != null && es.enabledInHierarchy)
+                        {
+                            eventSystemWasEnabledByUs = true;
+                            es.enabled = false;
+                            blockedEventSystem = es;
+                        }
                     }
                 }
                 else if (blockedEventSystem != null)
                 {
-                    blockedEventSystem.enabled = true;
+                    if (eventSystemWasEnabledByUs && !ReferenceEquals(blockedEventSystem, null))
+                    {
+                        blockedEventSystem.enabled = true;
+                    }
                     blockedEventSystem = null;
+                    eventSystemWasEnabledByUs = false;
                 }
             }
-            catch (Exception) { blockedEventSystem = null; }
+            catch (Exception)
+            {
+                blockedEventSystem = null;
+                eventSystemWasEnabledByUs = false;
+            }
         }
 
         private void RestoreCursor()
         {
             if (!cursorOverridden) return;
-            Cursor.lockState = prevLock;
-            Cursor.visible = prevCursorVisible;
+            try
+            {
+                Cursor.lockState = prevLock;
+                Cursor.visible = prevCursorVisible;
+            }
+            catch (Exception) { }
             cursorOverridden = false;
         }
 
         private void HandleMenuKey()
         {
-            if (settingsUi == null) return;
-            if (cfgMenuKey.Value.IsDown()) settingsUi.Visible = !settingsUi.Visible;
-            else if (settingsUi.Visible && !settingsUi.CapturingKey && Input.GetKeyDown(KeyCode.Escape)) settingsUi.Visible = false;
+            if (settingsUi == null || cfgMenuKey == null) return;
+            float now = SimTime();
+            // Bug proofing: edge-trigger with a small repeat guard instead of IsDown(), so holding or
+            // stuttering the key at low frame rates cannot make the window flicker open/closed.
+            if (now < nextMenuKeyCheck) return;
+            if (Input.GetKeyDown(cfgMenuKey.Value.Key))
+            {
+                settingsUi.Visible = !settingsUi.Visible;
+                nextMenuKeyCheck = now + 0.2f;
+            }
+            else if (settingsUi.Visible && !settingsUi.CapturingKey && Input.GetKeyDown(KeyCode.Escape))
+            {
+                settingsUi.Visible = false;
+                nextMenuKeyCheck = now + 0.2f;
+            }
         }
 
         // =====================================================================================
@@ -496,32 +624,48 @@ namespace DynamicAudio
         // =====================================================================================
         private void RegisterFailure(Exception e)
         {
-            float now = Time.realtimeSinceStartup;
-            if (now - failWindowStart > 10f)
+            try
             {
-                failWindowStart = now;
-                failCount = 0;
+                float now = Time.realtimeSinceStartup;
+                if (now - failWindowStart > 10f)
+                {
+                    failWindowStart = now;
+                    failCount = 0;
+                    safeModeStrikes = 0;       // a quiet stretch resets the escalation
+                }
+                failCount++;
+                if (failCount <= 3 && Logger != null) Logger.LogWarning("update error: " + e);
+                if (failCount >= 60)
+                {
+                    // Exponential backoff: 5s, 10s, 20s ... capped at 40s. The mod never switches itself off
+                    // permanently and never touches the config; it just pauses and retries on its own.
+                    if (safeModeStrikes < 20) safeModeStrikes++;
+                    float pause = Mathf.Min(5f * Mathf.Pow(2f, safeModeStrikes - 1), 40f);
+                    if (Logger != null) Logger.LogWarning("Too many errors; pausing Dynamic Audio for " + pause.ToString("F0") + " seconds (settings are untouched).");
+                    safeModeUntil = SimTime() + pause;
+                    failCount = 0;
+                    failWindowStart = now;
+                    try { ReleaseAll(); } catch (Exception) { }
+                }
             }
-            failCount++;
-            if (failCount <= 3) Logger.LogWarning("update error: " + e);
-            if (failCount >= 60)
-            {
-                Logger.LogWarning("Too many errors; pausing Dynamic Audio for 5 seconds (settings are untouched).");
-                safeModeUntil = Time.time + 5f;
-                failCount = 0;
-                failWindowStart = now;
-                try { ReleaseAll(); } catch (Exception) { }
-            }
+            catch (Exception) { }   // failure handling itself must never throw
         }
 
         private void Deactivate()
         {
             wasEnabled = false;
-            ReleaseAll();
-            listenerAudio.SetActive(false);
-            listenerAudio.Tick(0f);
-            tinnitus.Shutdown();
-            TravelDelay.Flush();
+            // Bug proofing: every step is isolated so one failing cleanup cannot leave the rest of the
+            // state (pending queue, tinnitus tone, listener filters) stuck on after the master switch flips.
+            try { ReleaseAll(); } catch (Exception e) { RegisterFailure(e); }
+            try { listenerAudio.SetActive(false); } catch (Exception) { }
+            try { listenerAudio.Tick(0f); } catch (Exception) { }
+            try { tinnitus.Shutdown(); } catch (Exception) { }
+            try { TravelDelay.Flush(); } catch (Exception) { }
+            // Uninstall the Harmony hook too when the master switch is off: no leftover patch overhead.
+            if (!cfgSoundDelayEnabled.Value || !TravelDelay.Installed)
+            {
+                try { TravelDelay.Uninstall(); } catch (Exception) { }
+            }
         }
 
         // =====================================================================================

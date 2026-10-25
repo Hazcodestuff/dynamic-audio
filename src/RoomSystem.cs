@@ -43,12 +43,23 @@ namespace DynamicAudio
 
             float width = (left >= 60f || right >= 60f) ? 120f : left + right;
             float length = (fwd >= 60f || back >= 60f) ? 120f : fwd + back;
-            float height = (up >= 40f || down >= 20f) ? 40f : up + down;
+            // If either vertical ray misses, treat it as open sky/floor: use the hit we DID get when it is
+            // plausible, otherwise fall back to a generic tall-space estimate. (V1.5.0 had the redundant
+            // condition "up < 40f && up < 25f" here and asymmetric range handling; fixed.)
+            bool upHit = up < 40f;
+            bool downHit = down < 20f;
+            float height;
+            if (upHit && downHit) height = up + down;
+            else if (upHit) height = Mathf.Max(up * 2f, 3f);
+            else if (downHit) height = Mathf.Max(down * 2f, 3f);
+            else height = 40f;
+            height = Mathf.Clamp(height, 1.5f, 60f);
 
             r.Width = width;
             r.Length = length;
             r.Height = height;
-            r.HasCeiling = up < 40f && up < 25f;
+            // A ceiling exists only when the UP ray actually hit something within its range.
+            r.HasCeiling = upHit;
 
             float[] d = new float[] { left, right, fwd, back, fr, fl, br, bl };
             int close = 0;
