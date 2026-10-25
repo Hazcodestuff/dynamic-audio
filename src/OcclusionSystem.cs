@@ -83,24 +83,37 @@ namespace DynamicAudio
             return col != null;
         }
 
-        private float EstimateThickness(Vector3 listenerPos, Vector3 aim, float entry, Transform ignoreRoot)
+        private float EstimateThickness(Vector3 listenerPos, Vector3 aim, float entry, Collider primary, Transform ignoreRoot)
         {
             Vector3 back = listenerPos - aim;
             float len = back.magnitude;
             if (len < 0.1f) return 0.3f;
             back /= len;
             int count = Physics.RaycastNonAlloc(aim, back, hits, len, mask, QueryTriggerInteraction.Ignore);
-            float nearest = float.MaxValue;
+            // Only trust an exit hit on the SAME collider that blocked the forward ray; otherwise a second,
+            // nearer wall behind the listener would give a wrong (or zero) thickness. If no same-collider hit
+            // is found, fall back to the nearest non-ignored hit, and finally to a thin-wall default.
+            float sameColExit = float.MaxValue;
+            float nearestAny = float.MaxValue;
             for (int k = 0; k < count; k++)
             {
                 Collider c = hits[k].collider;
                 if (c == null) continue;
                 if (ignoreRoot != null && c.transform.IsChildOf(ignoreRoot)) continue;
-                if (hits[k].distance < nearest) nearest = hits[k].distance;
+                float dist = hits[k].distance;
+                if (ReferenceEquals(c, primary))
+                {
+                    if (dist < sameColExit) sameColExit = dist;
+                }
+                if (dist < nearestAny) nearestAny = dist;
             }
-            if (nearest == float.MaxValue) return 0.3f;
-            float exitFromListener = len - nearest;
-            return Mathf.Clamp(exitFromListener - entry, 0.1f, 6f);
+            float exitDist = sameColExit;
+            if (exitDist == float.MaxValue) exitDist = nearestAny;
+            if (exitDist == float.MaxValue) return 0.3f;
+            float exitFromListener = len - exitDist;
+            float thick = exitFromListener - entry;
+            if (float.IsNaN(thick) || float.IsInfinity(thick)) thick = 0.3f;   // never poison the sim
+            return Mathf.Clamp(thick, 0.1f, 6f);
         }
 
         public OcclusionResult Probe(Vector3 listenerPos, Vector3 sourcePos, Transform sourceTop, int rays)
@@ -163,7 +176,7 @@ namespace DynamicAudio
 
             if (centerBlocked)
             {
-                res.ThicknessM = EstimateThickness(listenerPos, aim, centerEntry, sourceTop);
+                res.ThicknessM = EstimateThickness(listenerPos, aim, centerEntry, centerCollider, sourceTop);
                 res.DominantMaterial = MaterialSystem.Guess(centerCollider);
                 res.MaterialHfLoss = MaterialSystem.Get(res.DominantMaterial).HfLoss;
             }
