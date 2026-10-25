@@ -75,6 +75,7 @@ namespace DynamicAudio
             DynamicAudioPlugin p = DynamicAudioPlugin.Instance;
             if (p == null || !p.TravelDelayActive) return false;
             if (src == null || !src.isActiveAndEnabled || src.spatialBlend < 0.5f) return false;
+            if (p.IsDelayExempt(src)) return false;        // own gun / own vehicle / reload sounds
             Transform ear = p.Ear;
             if (ear == null) return false;
 

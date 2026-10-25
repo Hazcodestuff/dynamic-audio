@@ -56,3 +56,16 @@ Ravenfield's own audio code (`Assembly-CSharp/*.txt` in this repo). The V6 sourc
 ## Migration
 `[Internal] ConfigVersion` < 2 re-enables the master switch (V6 may have saved `Enabled=false`) and resets the old
 slow performance defaults.
+
+---
+
+## Addendum: 1.5.0 final round
+
+Issues reported after the first 1.5.0 test, and their fixes:
+
+| Report | Root cause | Fix |
+|---|---|---|
+| Echo/"delay" also after **reloading** | The listener-level `AudioEchoFilter` was always on, so it echoed every sound in the mix, including quiet ones. | Echo is now event-driven: only a freshly started loud gunshot/explosion pulses it. Own weapon sounds are detected through the game's `FirstPerson`/`PlayerVehicle` mixer groups, and `Weapon.reloading` suppresses the echo (and travel delay) for reload sounds. |
+| Tinnitus "extremely sensitive" | Low explosion threshold, fast exposure build-up, long rings, loud tone, no rest time. | Radius 25 > 12 m, sensitivity 1 > 0.5, exposure rates cut 2-3x, rings 2-7 s instead of up to 14 s, tone 0.35 > 0.2, wall between blast and listener halves severity, new `Cooldown` (30 s). |
+| Mod menu only on F11 | n/a | `GameMenuIntegration` clones the game's OPTIONS button (ESC > OPTIONS > DYNAMIC AUDIO) with an IMGUI fallback; `EventSystem` is paused while the window is open so clicks don't leak through. |
+| Muffles could be better | Linear cutoff sweep; no indoor/outdoor awareness. | Log-scale cutoff sweep, extra muffle for roofed-over emitters, smoother low-pass transitions. |

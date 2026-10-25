@@ -10,6 +10,7 @@ namespace DynamicAudio
         private static readonly string[] Tabs = new string[] { "General", "Occlusion", "Reverb", "Delay", "Effects", "Categories", "Performance" };
 
         public bool Visible;
+        public bool CapturingKey { get { return capturingKey; } }
 
         private readonly DynamicAudioPlugin p;
         private Rect winRect = new Rect(0f, 0f, 580f, 720f);
@@ -86,6 +87,7 @@ namespace DynamicAudio
         {
             Section("General");
             Toggle(p.cfgEnabled, "Enabled (master switch)");
+            Toggle(p.cfgPauseMenuButton, "Show button in ESC > OPTIONS menu");
             FloatSlider(p.cfgMaxSoundDistance, 50f, 1000f, " m - max simulated sound distance");
 
             Section("Menu");
@@ -127,7 +129,7 @@ namespace DynamicAudio
             Toggle(p.cfgReverbEnabled, "Enabled");
             FloatSlider(p.cfgReverbIntensity, 0f, 1f, " - overall reverb intensity");
             FloatSlider(p.cfgRoomSizeMultiplier, 0.3f, 2f, "x - room size influence on decay");
-            Section("Echo (large spaces)");
+            Section("Echo (after loud shots/blasts only)");
             Toggle(p.cfgEchoEnabled, "Enabled");
         }
 
@@ -155,6 +157,7 @@ namespace DynamicAudio
             FloatSlider(p.cfgTinnitusSensitivity, 0.1f, 3f, " - sustained-noise sensitivity");
             FloatSlider(p.cfgTinnitusRingVolume, 0f, 1f, " - ring loudness");
             FloatSlider(p.cfgTinnitusMuffle, 0f, 1f, " - temporary hearing muffle");
+            FloatSlider(p.cfgTinnitusCooldown, 0f, 120f, " s - rest time between rings");
             Section("Distance / air absorption");
             FloatSlider(p.cfgAirAbsorption, 0f, 1f, " - high-frequency loss over distance");
         }

@@ -38,6 +38,9 @@ namespace DynamicAudio
         private float tgtRefDel = 0.01f, curRefDel = 0.01f;
         private bool echoWanted;
         private float echoDelaySec = 0.1f;
+        private float echoEnv;
+        private float echoHold;
+        private float echoSuppress;
 
         private bool shockActive;
         private float shockStart;
@@ -131,6 +134,22 @@ namespace DynamicAudio
             curRefl = tgtRefl = -2800f;
             curRefDel = tgtRefDel = 0.01f;
             shockActive = false;
+            echoEnv = 0f;
+            echoHold = 0f;
+            // forget rigs of listeners that no longer exist
+            List<int> dead = null;
+            foreach (KeyValuePair<int, Rig> kv in rigs)
+            {
+                if (kv.Value.Listener == null)
+                {
+                    if (dead == null) dead = new List<int>();
+                    dead.Add(kv.Key);
+                }
+            }
+            if (dead != null)
+            {
+                for (int i = 0; i < dead.Count; i++) rigs.Remove(dead[i]);
+            }
             listenerInfo = "on " + go.name;
         }
 
@@ -204,6 +223,22 @@ namespace DynamicAudio
             if (echoWanted) echoDelaySec = Mathf.Clamp((2f * Mathf.Min(big, 120f)) / 343f, 0.05f, 0.45f);
         }
 
+        /// <summary>A loud sound (gunshot/explosion) just happened: let the echo fade in for a moment.</summary>
+        public void PulseEcho(float strength01)
+        {
+            if (echoSuppress > 0f) return;
+            strength01 = Mathf.Clamp01(strength01);
+            if (strength01 > echoEnv) echoEnv = strength01;
+            echoHold = 0.25f;
+        }
+
+        /// <summary>The player is doing something quiet (reloading): kill the echo quickly and keep it off.</summary>
+        public void SuppressEcho(float seconds)
+        {
+            if (seconds > echoSuppress) echoSuppress = seconds;
+            echoHold = 0f;
+        }
+
         public void TriggerShockwave(float severity01)
         {
             if (!active || rig == null) return;
@@ -255,13 +290,21 @@ namespace DynamicAudio
                 rig.Reverb.reverbDelay = Mathf.Clamp(curRefDel * 1.5f, 0.01f, 0.1f);   // Unity range 0-0.1
             }
 
-            if (rig.Echo.enabled != echoWanted) rig.Echo.enabled = echoWanted;
-            if (echoWanted)
+            // The echo filter sits on the listener, i.e. it affects EVERYTHING (reloads, footsteps, UI).
+            // So it is event-driven: it only fades in after a loud sound (gunshot/explosion) and fades out
+            // quickly, and it is damped hard while the player is reloading.
+            if (echoSuppress > 0f) echoSuppress -= dt;
+            if (echoHold > 0f) echoHold -= dt;
+            else echoEnv = Mathf.MoveTowards(echoEnv, 0f, dt * (echoSuppress > 0f ? 5f : 1.1f));
+
+            bool echoOn = echoWanted && echoEnv > 0.03f;
+            if (rig.Echo.enabled != echoOn) rig.Echo.enabled = echoOn;
+            if (echoOn)
             {
                 bool tunnel = currentRoom.Type == RoomType.Tunnel;
                 rig.Echo.delay = echoDelaySec * 1000f;      // AudioEchoFilter.delay is MILLISECONDS
                 rig.Echo.decayRatio = tunnel ? 0.45f : 0.3f;
-                rig.Echo.wetMix = tunnel ? 0.12f : 0.06f;
+                rig.Echo.wetMix = (tunnel ? 0.18f : 0.10f) * echoEnv;
                 rig.Echo.dryMix = 1f;
             }
 

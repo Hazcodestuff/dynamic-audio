@@ -155,6 +155,12 @@ namespace DynamicAudio
 
             res.Ratio = (float)blocked / (float)n;
 
+            if (blocked > 0)
+            {
+                RaycastHit roof;
+                res.SourceCovered = Physics.Raycast(sourcePos + Vector3.up * 0.3f, Vector3.up, out roof, 25f, mask, QueryTriggerInteraction.Ignore);
+            }
+
             if (centerBlocked)
             {
                 res.ThicknessM = EstimateThickness(listenerPos, aim, centerEntry, sourceTop);
