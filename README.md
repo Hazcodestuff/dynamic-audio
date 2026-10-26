@@ -1,8 +1,8 @@
-# Dynamic Audio 1.5.0 (for Ravenfield)
+# Dynamic Audio 1.5.3 (for Ravenfield)
 
 A BepInEx plugin that makes Ravenfield sound like a real battlefield: sounds get muffled behind walls, rooms add reverb, loud shots leave a short echo in open spaces, and (optionally) your ears ring after a nearby explosion.
 
-> **1.5.0 is a full rebuild of V6.** It fixes the master switch turning itself off, the menu not opening, sounds overloading then going silent, and random muffled audio in vehicles. See [docs/V6_BUG_REPORT.md](docs/V6_BUG_REPORT.md) for what was wrong and how it was fixed.
+> **1.5.x is a full rebuild of V6.** It fixes the master switch turning itself off, the menu not opening, sounds overloading then going silent, and random muffled audio in vehicles. See [docs/V6_BUG_REPORT.md](docs/V6_BUG_REPORT.md) for what was wrong and how it was fixed.
 
 ---
 
@@ -30,6 +30,7 @@ A BepInEx plugin that makes Ravenfield sound like a real battlefield: sounds get
 | **Air absorption** | Far-away sounds lose a little volume and high frequencies. | On |
 | **Tinnitus** | Ear ringing after a very close explosion or long loud gunfire. Gentle by default, with a rest time between rings. | **Off** |
 | **Travel delay** (experimental) | Delays distant gunshots and explosions by distance / speed of sound. Your own weapon and reloads are never delayed. | **Off** |
+| **Sigma Mode** | The simple, bug-proof mode: ONLY the room reverb stays on. No muffling, echo, shockwave, tinnitus or delay, and nothing is ever attached to game sounds. See below. | Off |
 | **In-game menu** | Settings live inside the game: ESC > OPTIONS > **DYNAMIC AUDIO**. F11 also works. | On |
 
 Your own weapon, your own vehicle and reload sounds are detected using the game's own audio mixer groups, so they are never muffled, delayed, or echoed by mistake.
@@ -60,6 +61,14 @@ If the extra button doesn't show up in the pause menu (for example, a future gam
 
 ---
 
+## Sigma Mode (reverb only)
+
+Not everyone wants tinnitus, delay, muffling and echo. **Sigma Mode** is a single switch for those players: it keeps **only the room reverb** and turns everything else off. Because the mod then never touches individual game sounds, it is the simplest and safest way to run it. If you ever hear an audio oddity, switch Sigma Mode on to check whether the mod is involved.
+
+Turn it on in the menu (**General > SIGMA MODE**) or in the config: `[General] SigmaMode = true`. Reverb settings (intensity, room size) still apply.
+
+---
+
 ## Settings explained
 
 Every setting is in the in-game menu and in the config file. The ones most people want to change:
@@ -68,6 +77,7 @@ Every setting is in the in-game menu and in the config file. The ones most peopl
 |---|---|
 | Less muffling through walls | `[Filtering] WallMuffleStrength` (try 0.5), or raise `MinCutoffHz` |
 | Less reverb | `[Reverb] Intensity` |
+| Only reverb, nothing else | `[General] SigmaMode = true` |
 | No echo at all | `[Echo] Enabled = false` |
 | Ringing ears | `[Tinnitus] Enabled = true`. Then tune `Sensitivity`, `RingVolume`, `ExplosionRadius`, `Cooldown` |
 | Rarer / quieter tinnitus | Lower `Sensitivity`, lower `RingVolume`, raise `Cooldown` |
@@ -211,15 +221,37 @@ dotnet build -c Release -p:RavenfieldDir="C:\...\Ravenfield" -p:DefineConstants=
 
 | Problem | Try this |
 |---|---|
-| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.0 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
+| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.3 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
 | Menu button missing in ESC > OPTIONS | Use F11 or the corner button that shows while paused. |
 | Too muffled | Lower `WallMuffleStrength` or raise `MinCutoffHz`. |
 | Echo still sounds odd | Turn `[Echo] Enabled` off, and tell me which situation it happens in. |
 | Tinnitus too much | Lower Sensitivity/RingVolume or raise Cooldown, or switch it off. |
 | Lower FPS | Lower `MaxSimulatedSounds` and `RayCount`. |
+| Drone/buzz while the pause menu is open | Set `[General] Enabled = false` and pause again. If the buzz is still there, it comes from the game or another mod, not Dynamic Audio. If it disappears, tell me whether it also happens with **Sigma Mode** on. |
+| Odd audio of any kind | Turn on **Sigma Mode** (reverb only). If the problem disappears, one of the other effects was involved; please report which one and when. |
 | "Safe mode" in the debug overlay | The mod hit many errors in a row and paused itself for 5 seconds. It recovers on its own and never changes your settings. Please report the log. |
 
 ---
+
+## What changed in 1.5.3 (final audit)
+
+- New sounds are noticed twice as fast (`ScanInterval` default 0.25 s), so a shot is muffled/echoed from its first moment.
+- A new volume filter now starts exactly at the sound's current level, so it can never blip loud; resuming after a pause restarts the timers immediately.
+- Melee swings are classified as impacts (they used to count as gunshots: echo, delay, tinnitus).
+- Turning a category off (e.g. Vehicles) in the menu immediately frees the sounds already being processed.
+- Menu button: scans less often while playing, remembers non-matching buttons, and strips game scripts from the cloned button so it can only open Dynamic Audio.
+- "Reset ALL to defaults" no longer resets the menu key or the menu-button option (so you can't lock yourself out). The config file is written once at start instead of dozens of times; leaked bookkeeping entries are cleaned up.
+
+## What changed in 1.5.2
+
+- **Pause drone, take two:** analysing a recording showed one 1024-sample audio buffer stuck on repeat (a ~47 Hz buzz) for as long as the pause menu was open. Now the mod hooks the game's own pause call (`AudioManager.PausePlayback`): before the game pauses sound, every reverb/echo/low-pass/gain filter the mod added is **removed** from the audio, and the real pause happens a few frames later. Filters are re-created automatically when you resume. Switching the master switch off also removes them completely.
+
+## What changed in 1.5.1
+
+- **Paused game:** all of the mod's filters switch off completely while the game is paused (ESC menu) and come back on resume. This fixes the stuttering/droning audio in the pause menu.
+- **No more sudden volume jumps:** sounds are never snapped back to full volume (when the sound budget swaps sounds, or when a wall check flickers). Levels now ease in slowly and out quickly, in decibels. Listener filters (reverb/echo/low-pass) get their values set *before* they are switched on, so Unity's loud defaults are never heard.
+- **Travel delay rebuilt:** the delayed sound is now played from a temporary copy at the spot where the shot happened, instead of re-using the game's recycled audio source. Only gunshots and explosions are delayed, with a hard limit on how many can wait at once, and nothing is delayed while paused.
+- **Sigma Mode** added (reverb only).
 
 ## What changed in 1.5.0
 
@@ -238,4 +270,4 @@ dotnet build -c Release -p:RavenfieldDir="C:\...\Ravenfield" -p:DefineConstants=
 ## Credits
 
 Original concept and development by the Dynamic Audio author.  
-1.5.0 rebuild with Claude (Anthropic).
+1.5.x rebuild with Claude (Anthropic).
