@@ -17,6 +17,7 @@ namespace DynamicAudio
         private readonly DynamicAudioPlugin plugin;
         private readonly SettingsUi ui;
         private readonly HashSet<int> clonedFrom = new HashSet<int>();
+        private readonly HashSet<int> notOptions = new HashSet<int>();
         private readonly List<GameObject> clones = new List<GameObject>();
         private float nextScan;
         private int failures;
@@ -54,7 +55,8 @@ namespace DynamicAudio
                 return;
             }
             if (unscaledNow < nextScan) return;
-            nextScan = unscaledNow + 0.5f;
+            // The pause menu only exists while paused: look often then, and only rarely otherwise (main menu).
+            nextScan = unscaledNow + (DynamicAudioPlugin.IsPaused ? 0.5f : 3f);
             try
             {
                 Scan();
@@ -73,18 +75,29 @@ namespace DynamicAudio
 
         private void Scan()
         {
+            PruneCaches();
             Button[] buttons = UnityEngine.Object.FindObjectsOfType<Button>();
             for (int i = 0; i < buttons.Length; i++)
             {
                 Button b = buttons[i];
                 if (b == null) continue;
                 int id = b.GetInstanceID();
-                if (clonedFrom.Contains(id)) continue;
+                if (clonedFrom.Contains(id) || notOptions.Contains(id)) continue;
                 if (IsOurs(b.gameObject)) continue;
-                if (!LooksLikeOptions(b)) continue;
+                if (!LooksLikeOptions(b))
+                {
+                    notOptions.Add(id);
+                    continue;
+                }
                 clonedFrom.Add(id);
                 Clone(b);
             }
+        }
+
+        private void PruneCaches()
+        {
+            if (notOptions.Count > 1024) notOptions.Clear();
+            if (clonedFrom.Count > 256) clonedFrom.Clear();     // the parent.Find check below stops duplicates
         }
 
         private static bool IsOurs(GameObject go)
@@ -114,6 +127,17 @@ namespace DynamicAudio
             GameObject go = UnityEngine.Object.Instantiate(original.gameObject, parent, false);
             go.name = "DynamicAudioMenuButton";
             go.transform.SetSiblingIndex(original.transform.GetSiblingIndex() + 1);
+
+            // Keep only the visual/UI parts: any game script copied from the OPTIONS button could still open the game's own options.
+            MonoBehaviour[] scripts = go.GetComponentsInChildren<MonoBehaviour>(true);
+            for (int i = 0; i < scripts.Length; i++)
+            {
+                MonoBehaviour mb = scripts[i];
+                if (mb == null) continue;
+                string ns = mb.GetType().Namespace;
+                if (ns != null && (ns.StartsWith("UnityEngine.UI") || ns.StartsWith("TMPro"))) continue;
+                UnityEngine.Object.Destroy(mb);
+            }
 
             Button nb = go.GetComponent<Button>();
             if (nb == null)

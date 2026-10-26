@@ -1,4 +1,4 @@
-# Dynamic Audio 1.5.2 (for Ravenfield)
+# Dynamic Audio 1.5.3 (for Ravenfield)
 
 A BepInEx plugin that makes Ravenfield sound like a real battlefield: sounds get muffled behind walls, rooms add reverb, loud shots leave a short echo in open spaces, and (optionally) your ears ring after a nearby explosion.
 
@@ -221,7 +221,7 @@ dotnet build -c Release -p:RavenfieldDir="C:\...\Ravenfield" -p:DefineConstants=
 
 | Problem | Try this |
 |---|---|
-| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.2 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
+| Nothing changes in game | Check `BepInEx/LogOutput.log` for "Dynamic Audio v1.5.3 initialized". If it's missing, the DLL isn't in `BepInEx/plugins`, or BepInEx isn't installed. |
 | Menu button missing in ESC > OPTIONS | Use F11 or the corner button that shows while paused. |
 | Too muffled | Lower `WallMuffleStrength` or raise `MinCutoffHz`. |
 | Echo still sounds odd | Turn `[Echo] Enabled` off, and tell me which situation it happens in. |
@@ -232,6 +232,15 @@ dotnet build -c Release -p:RavenfieldDir="C:\...\Ravenfield" -p:DefineConstants=
 | "Safe mode" in the debug overlay | The mod hit many errors in a row and paused itself for 5 seconds. It recovers on its own and never changes your settings. Please report the log. |
 
 ---
+
+## What changed in 1.5.3 (final audit)
+
+- New sounds are noticed twice as fast (`ScanInterval` default 0.25 s), so a shot is muffled/echoed from its first moment.
+- A new volume filter now starts exactly at the sound's current level, so it can never blip loud; resuming after a pause restarts the timers immediately.
+- Melee swings are classified as impacts (they used to count as gunshots: echo, delay, tinnitus).
+- Turning a category off (e.g. Vehicles) in the menu immediately frees the sounds already being processed.
+- Menu button: scans less often while playing, remembers non-matching buttons, and strips game scripts from the cloned button so it can only open Dynamic Audio.
+- "Reset ALL to defaults" no longer resets the menu key or the menu-button option (so you can't lock yourself out). The config file is written once at start instead of dozens of times; leaked bookkeeping entries are cleaned up.
 
 ## What changed in 1.5.2
 

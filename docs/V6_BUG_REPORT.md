@@ -86,3 +86,9 @@ Issues reported after the first 1.5.0 test, and their fixes:
 ## Addendum: 1.5.2 (pause drone analysed from a recording)
 
 Audio from a user's recording (Ravenfield + 1.5.1) was analysed: during every pause-menu period the output was a perfectly periodic tone (fundamental 46.9 Hz = 48000 / 1024, harmonics at 140/188/328 Hz, spectral flatness ~0.003) and absent during normal play, i.e. a single 1024-sample DSP buffer repeating. The game pauses audio with `AudioListener.pause = true` (`AudioManager.PausePlayback`). Disabling our filters one frame after that was too late, so 1.5.2 patches `PausePlayback`/`ResumePlayback` with Harmony: filters are removed first, the real pause is applied 4 frames later, and the resume cancels a pending pause.
+
+---
+
+## Addendum: 1.5.3 (final audit)
+
+Fresh-eyes review of the whole source. Fixed: late discovery of new sounds (scan 0.5 s > 0.25 s), loud blip when a gain filter is attached to an already-quiet sound (`Prime`), melee misclassified as gunshot, disabled categories not releasing tracked sounds, repeated config writes at start-up, heavy UI scan and duplicated game scripts on the cloned menu button, Reset-to-defaults able to change the menu key, unbounded id sets.

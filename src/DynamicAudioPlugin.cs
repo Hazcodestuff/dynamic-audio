@@ -12,9 +12,9 @@ namespace DynamicAudio
     {
         public const string PluginGuid = "lexge.dynamicaudio";
         public const string PluginName = "Dynamic Audio";
-        public const string PluginVersion = "1.5.2";
+        public const string PluginVersion = "1.5.3";
 
-        private const int CurrentConfigVersion = 3;
+        private const int CurrentConfigVersion = 4;
         private const float PollInterval = 0.05f;
         private const float MinTrackDistance = 2.5f;
         private const float OffCutoff = 16500f;
@@ -337,7 +337,7 @@ namespace DynamicAudio
             cfgProcessFootsteps = BindB("Categories", "Footsteps", false, "Process footstep sounds (off by default: many sources, low payoff).");
             cfgProcessEnvironment = BindB("Categories", "Environment", true, "Process general environment sounds.");
 
-            cfgScanInterval = BindF("Performance", "ScanInterval", 0.5f, 0.25f, 5f, "How often the scene is scanned for new AudioSources (seconds).");
+            cfgScanInterval = BindF("Performance", "ScanInterval", 0.25f, 0.1f, 5f, "How often the scene is scanned for new AudioSources (seconds). Lower = new sounds are caught sooner.");
             cfgNearUpdateInterval = BindF("Performance", "NearUpdateInterval", 0.15f, 0.03f, 1f, "Simulation update interval for nearby important sounds (seconds).");
             cfgMidUpdateInterval = BindF("Performance", "MidUpdateInterval", 0.45f, 0.1f, 2f, "Simulation update interval for medium-distance sounds (seconds).");
             cfgMaxSimulatedSounds = BindI("Performance", "MaxSimulatedSounds", 16, 2, 64, "Maximum number of sounds simulated simultaneously (lowest priority dropped first).");
@@ -373,6 +373,10 @@ namespace DynamicAudio
                 cfgTinnitusMuffle.Value = (float)cfgTinnitusMuffle.DefaultValue;
                 cfgTinnitusCooldown.Value = (float)cfgTinnitusCooldown.DefaultValue;
             }
+            if (cfgConfigVersion.Value < 4)
+            {
+                cfgScanInterval.Value = (float)cfgScanInterval.DefaultValue;    // new sounds are noticed sooner
+            }
             cfgConfigVersion.Value = CurrentConfigVersion;
             Config.Save();
             Logger.LogInfo("Config migrated to version " + CurrentConfigVersion + " (master switch re-enabled).");
@@ -383,6 +387,8 @@ namespace DynamicAudio
             foreach (KeyValuePair<ConfigDefinition, ConfigEntryBase> kv in Config)
             {
                 if (kv.Key.Section == "Internal") continue;
+                // never lock the user out: keep the master switch, menu key and menu button as they are
+                if (kv.Key.Section == "General" && (kv.Key.Key == "MenuKey" || kv.Key.Key == "PauseMenuButton")) continue;
                 kv.Value.BoxedValue = kv.Value.DefaultValue;
             }
         }
@@ -406,9 +412,9 @@ namespace DynamicAudio
         private void Awake()
         {
             Instance = this;
+            Config.SaveOnConfigSet = false;      // no file write per setting / per slider move (saved once, debounced)
             BindConfig();
             MigrateConfig();
-            Config.SaveOnConfigSet = false;      // sliders no longer rewrite the file on every mouse move
             Config.SettingChanged += OnSettingChanged;
 
             lastUseGameMask = cfgUseGameMask.Value;
@@ -489,6 +495,12 @@ namespace DynamicAudio
                     catch (Exception e) { RegisterFailure(e); }
                 }
                 return;
+            }
+            if (wasPaused)
+            {
+                nextPoll = 0f;
+                nextScan = 0f;
+                nextRoomProbe = 0f;
             }
             wasPaused = false;
 
@@ -689,7 +701,7 @@ namespace DynamicAudio
         private void ScanSources(float now)
         {
             if (now < nextScan) return;
-            nextScan = now + Mathf.Max(0.25f, cfgScanInterval.Value);
+            nextScan = now + Mathf.Max(0.1f, cfgScanInterval.Value);
 
             allSources.Clear();
             allSources.AddRange(UnityEngine.Object.FindObjectsOfType<AudioSource>());
@@ -905,6 +917,12 @@ namespace DynamicAudio
                         continue;
                     }
 
+                    if (!CategoryEnabled(t.Category))
+                    {
+                        RemoveTracked(i, now);
+                        continue;
+                    }
+
                     if (s.isPlaying) t.LastPlayingTime = now;
                     else if (now - t.LastPlayingTime > 1f)
                     {
@@ -1063,11 +1081,19 @@ namespace DynamicAudio
             bool gainNeeded = t.CurrentGain < 0.995f || t.TargetGain < 0.995f;
             if (gainNeeded)
             {
-                if (t.Gain == null) t.Gain = GetOrAddGain(go);
+                if (t.Gain == null)
+                {
+                    t.Gain = GetOrAddGain(go);
+                    if (t.Gain != null) t.Gain.Prime(t.CurrentGain);
+                }
                 if (t.Gain != null)
                 {
+                    if (!t.Gain.enabled)
+                    {
+                        t.Gain.Prime(t.CurrentGain);
+                        t.Gain.enabled = true;
+                    }
                     t.Gain.TargetGain = t.CurrentGain;
-                    if (!t.Gain.enabled) t.Gain.enabled = true;
                 }
             }
             else if (t.Gain != null)
@@ -1230,7 +1256,7 @@ namespace DynamicAudio
             st.LastAt = Time.realtimeSinceStartup;
         }
 
-        private static void HardOff(TrackedSound t)
+        private void HardOff(TrackedSound t)
         {
             // Switch off AND remove: a filter left on a paused / reconfigured audio graph is what loops stale buffers.
             if (t.Gain != null)
@@ -1242,6 +1268,7 @@ namespace DynamicAudio
             if (t.LowPass != null)
             {
                 t.LowPass.enabled = false;
+                ownedLowPass.Remove(t.LowPass.GetInstanceID());
                 UnityEngine.Object.Destroy(t.LowPass);
             }
             t.Gain = null;

@@ -31,13 +31,13 @@ namespace DynamicAudio
             AudioClip clip = src.clip;
 
             // Component-based hints first: they are exact and survive PlayOneShot (clip == null).
+            if (go.GetComponentInParent<MeleeWeapon>() != null) return SoundCategory.Impact;   // MeleeWeapon derives from Weapon: test it first
             if (go.GetComponentInParent<Weapon>() != null) return SoundCategory.Gunshot;
             if (go.GetComponentInParent<WeaponImposter>() != null) return SoundCategory.Gunshot;
             if (go.GetComponentInParent<ExplodingProjectile>() != null) return SoundCategory.Explosion;
             if (go.GetComponentInParent<PlayExplosionSound>() != null) return SoundCategory.Explosion;
             if (go.GetComponentInParent<FootstepAudio>() != null) return SoundCategory.Footstep;
             if (go.GetComponentInParent<Vehicle>() != null) return SoundCategory.Vehicle;
-            if (go.GetComponentInParent<MeleeWeapon>() != null) return SoundCategory.Impact;
 
             string n = string.Empty;
             if (clip != null) n = clip.name;

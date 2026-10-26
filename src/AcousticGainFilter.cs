@@ -18,6 +18,14 @@ namespace DynamicAudio
             set { targetGain = value; }
         }
 
+        /// <summary>Start (or restart) exactly at this gain, so a new filter on an already-quiet sound never blips loud.</summary>
+        public void Prime(float g)
+        {
+            g = Mathf.Clamp01(g);
+            currentGain = g;
+            targetGain = g;
+        }
+
         private void OnAudioFilterRead(float[] data, int channels)
         {
             if (data == null || channels < 1) return;
